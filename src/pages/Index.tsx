@@ -87,6 +87,7 @@ const Index = () => {
                   key={index}
                   role={message.role}
                   content={message.content}
+                  image={message.image}
                   isStreaming={
                     isLoading &&
                     index === messages.length - 1 &&
