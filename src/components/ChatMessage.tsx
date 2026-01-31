@@ -4,10 +4,11 @@ import { Bot, User } from "lucide-react";
 interface ChatMessageProps {
   role: "user" | "assistant";
   content: string;
+  image?: string;
   isStreaming?: boolean;
 }
 
-export function ChatMessage({ role, content, isStreaming }: ChatMessageProps) {
+export function ChatMessage({ role, content, image, isStreaming }: ChatMessageProps) {
   const isUser = role === "user";
 
   return (
@@ -37,6 +38,13 @@ export function ChatMessage({ role, content, isStreaming }: ChatMessageProps) {
         <p className="text-sm font-medium mb-1 text-muted-foreground">
           {isUser ? "Toi" : "SIGMA"}
         </p>
+        {image && (
+          <img
+            src={image}
+            alt="Image envoyée"
+            className="max-w-xs max-h-48 rounded-lg border border-border mb-2 object-contain"
+          />
+        )}
         <div className="text-foreground whitespace-pre-wrap break-words">
           {content}
           {isStreaming && (
