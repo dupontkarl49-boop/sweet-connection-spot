@@ -94,8 +94,8 @@ export function useChat() {
         
         if (response.status === 429) {
           toast({
-            title: "Trop de requêtes",
-            description: "Attends un peu avant de réessayer.",
+            title: "⏳ Trop de requêtes",
+            description: "L'API Gemini gratuite est limitée à 15 requêtes/minute. Attends 30 secondes puis réessaie.",
             variant: "destructive",
           });
         } else if (response.status === 402) {
