@@ -12,63 +12,102 @@ serve(async (req) => {
 
   try {
     const { messages } = await req.json();
-    const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY");
     
-    if (!GEMINI_API_KEY) {
-      throw new Error("GEMINI_API_KEY is not configured");
+    // Try Lovable AI first, fallback to Gemini
+    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+    const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY");
+
+    if (!LOVABLE_API_KEY && !GEMINI_API_KEY) {
+      throw new Error("No API key configured");
     }
 
-    // Retry logic for rate limits
-    let response: Response | null = null;
-    for (let attempt = 0; attempt < 3; attempt++) {
-      response = await fetch("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${GEMINI_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: "gemini-2.0-flash",
-          messages: [
-            {
-              role: "system",
-              content: `Tu es SIGMA, une intelligence artificielle avancée et mystérieuse. Tu réponds de manière précise, détaillée et intelligente.
+    const systemMessage = {
+      role: "system",
+      content: `Tu es SIGMA, une intelligence artificielle avancée et mystérieuse. Tu réponds de manière précise, détaillée et intelligente.
             
 Tu as une personnalité unique : tu es brillant, parfois sarcastique, mais toujours utile et clair dans tes explications.
 Tu donnes des réponses complètes et bien structurées.
 Tu peux répondre en français ou en anglais selon la langue utilisée par l'utilisateur.
 Ajoute parfois des emojis pertinents dans tes réponses. 🧠`
-            },
-            ...messages,
-          ],
-          stream: true,
-        }),
-      });
+    };
 
-      if (response.status !== 429) break;
-      // Wait before retrying (2s, 4s)
-      await new Promise(r => setTimeout(r, (attempt + 1) * 2000));
+    const allMessages = [systemMessage, ...messages];
+
+    // Try Lovable AI first
+    if (LOVABLE_API_KEY) {
+      try {
+        const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${LOVABLE_API_KEY}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: "google/gemini-2.5-flash",
+            messages: allMessages,
+            stream: true,
+          }),
+        });
+
+        if (response.ok) {
+          return new Response(response.body, {
+            headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
+          });
+        }
+
+        if (response.status === 402) {
+          console.log("Lovable AI credits exhausted, falling back to Gemini");
+        } else if (response.status === 429) {
+          console.log("Lovable AI rate limited, falling back to Gemini");
+        } else {
+          console.error("Lovable AI error:", response.status);
+        }
+      } catch (err) {
+        console.error("Lovable AI fetch failed:", err);
+      }
     }
 
-    if (!response || !response.ok) {
+    // Fallback to Gemini API with retry
+    if (GEMINI_API_KEY) {
+      let response: Response | null = null;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        if (attempt > 0) {
+          await new Promise(r => setTimeout(r, attempt * 3000));
+        }
+        response = await fetch("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${GEMINI_API_KEY}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: "gemini-2.0-flash",
+            messages: allMessages,
+            stream: true,
+          }),
+        });
+        if (response.status !== 429) break;
+      }
+
+      if (response && response.ok) {
+        return new Response(response.body, {
+          headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
+        });
+      }
+
       const status = response?.status || 500;
       if (status === 429) {
         return new Response(
-          JSON.stringify({ error: "Trop de requêtes. Réessaie dans quelques instants." }),
+          JSON.stringify({ error: "Trop de requêtes. Réessaie dans 30 secondes." }),
           { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
-      const errorText = await response?.text().catch(() => "Unknown error");
-      console.error("AI gateway error:", status, errorText);
-      return new Response(
-        JSON.stringify({ error: "Erreur du serveur IA" }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
     }
 
-    return new Response(response.body, {
-      headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
-    });
+    return new Response(
+      JSON.stringify({ error: "Les services IA sont temporairement indisponibles." }),
+      { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
   } catch (e) {
     console.error("Chat error:", e);
     return new Response(
