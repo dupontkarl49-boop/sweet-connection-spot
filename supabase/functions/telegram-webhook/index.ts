@@ -96,13 +96,13 @@ async function sendTypingAction(botToken: string, chatId: number) {
   });
 }
 
-async function tryLovableAI(apiKey: string, userMessage: string, systemPrompt: string): Promise<string | null> {
+async function tryLovableAI(apiKey: string, userMessage: string, systemPrompt: string, models: string[]): Promise<string | null> {
   const messages = [
     { role: "system", content: systemPrompt },
     { role: "user", content: userMessage },
   ];
 
-  for (const model of LOVABLE_MODELS) {
+  for (const model of models) {
     try {
       const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
         method: "POST",
@@ -189,8 +189,10 @@ async function getAIResponse(
 ): Promise<string> {
   const systemPrompt = unlocked ? UNLOCKED_SYSTEM_PROMPT : SYSTEM_PROMPT;
 
+  const models = unlocked ? UNLOCKED_MODELS : LOVABLE_MODELS;
+
   if (lovableApiKey) {
-    const lovableResponse = await tryLovableAI(lovableApiKey, userMessage, systemPrompt);
+    const lovableResponse = await tryLovableAI(lovableApiKey, userMessage, systemPrompt, models);
     if (lovableResponse) return lovableResponse;
   }
 
