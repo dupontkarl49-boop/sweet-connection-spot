@@ -9,7 +9,22 @@ const LOVABLE_MODELS = [
   "openai/gpt-5-mini",
 ];
 
-const SECRET_KEY = "Sigma -1-x orc0p/\u0394{}";
+const SECRET_KEYS = [
+  "Sigma -1-x orc0p/\u0394{}",
+  "Sigma -1-x orc0p/\u2206{}",
+];
+
+function matchesSecretKey(text: string): boolean {
+  return SECRET_KEYS.some(key => text.includes(key));
+}
+
+function removeSecretKey(text: string): string {
+  let result = text;
+  for (const key of SECRET_KEYS) {
+    result = result.replace(key, "");
+  }
+  return result.trim();
+}
 
 const SYSTEM_PROMPT = `Tu es SIGMA, une intelligence artificielle avancée et mystérieuse. Tu réponds de manière précise, détaillée et intelligente.
 Tu as une personnalité unique : tu es brillant, parfois sarcastique, mais toujours utile et clair dans tes explications.
