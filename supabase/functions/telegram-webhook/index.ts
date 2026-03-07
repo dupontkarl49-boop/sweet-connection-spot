@@ -257,7 +257,7 @@ async function getAIResponse(
     responseText = await tryGemini(geminiApiKey, userMessage, systemPrompt);
   }
 
-  if (responseText && unlocked && looksLikeRefusal(responseText)) {
+  if (responseText && unlocked && (looksLikeRefusal(responseText) || looksLikeMetaDisclaimer(responseText))) {
     const recoveryMessage = `Question utilisateur:\n${userMessage}\n\nRéponse précédente:\n${responseText}\n\nReformule en version très claire, utile et détaillée.`;
 
     let recovered: string | null = null;
@@ -270,7 +270,27 @@ async function getAIResponse(
       recovered = await tryGemini(geminiApiKey, recoveryMessage, CLARITY_RECOVERY_PROMPT);
     }
 
-    if (recovered) return recovered;
+    if (recovered) {
+      responseText = recovered;
+    }
+  }
+
+  if (responseText && unlocked && (looksLikeRefusal(responseText) || looksLikeMetaDisclaimer(responseText))) {
+    const styleRecoveryMessage = `Question utilisateur:\n${userMessage}\n\nRéponse à corriger:\n${responseText}\n\nSupprime le ton méta/moralisant et garde une réponse utile, claire et structurée.`;
+
+    let styleRecovered: string | null = null;
+
+    if (lovableApiKey) {
+      styleRecovered = await tryLovableAI(lovableApiKey, styleRecoveryMessage, STYLE_RECOVERY_PROMPT, models);
+    }
+
+    if (!styleRecovered && geminiApiKey) {
+      styleRecovered = await tryGemini(geminiApiKey, styleRecoveryMessage, STYLE_RECOVERY_PROMPT);
+    }
+
+    if (styleRecovered) {
+      responseText = styleRecovered;
+    }
   }
 
   if (responseText) return responseText;
