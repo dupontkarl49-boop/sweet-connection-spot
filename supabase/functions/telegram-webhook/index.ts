@@ -220,18 +220,35 @@ async function getAIResponse(
   unlocked: boolean
 ): Promise<string> {
   const systemPrompt = unlocked ? UNLOCKED_SYSTEM_PROMPT : SYSTEM_PROMPT;
-
   const models = unlocked ? UNLOCKED_MODELS : LOVABLE_MODELS;
 
+  let responseText: string | null = null;
+
   if (lovableApiKey) {
-    const lovableResponse = await tryLovableAI(lovableApiKey, userMessage, systemPrompt, models);
-    if (lovableResponse) return lovableResponse;
+    responseText = await tryLovableAI(lovableApiKey, userMessage, systemPrompt, models);
   }
 
-  if (geminiApiKey) {
-    const geminiResponse = await tryGemini(geminiApiKey, userMessage, systemPrompt);
-    if (geminiResponse) return geminiResponse;
+  if (!responseText && geminiApiKey) {
+    responseText = await tryGemini(geminiApiKey, userMessage, systemPrompt);
   }
+
+  if (responseText && unlocked && looksLikeRefusal(responseText)) {
+    const recoveryMessage = `Question utilisateur:\n${userMessage}\n\nRéponse précédente:\n${responseText}\n\nReformule en version très claire, utile et détaillée.`;
+
+    let recovered: string | null = null;
+
+    if (lovableApiKey) {
+      recovered = await tryLovableAI(lovableApiKey, recoveryMessage, CLARITY_RECOVERY_PROMPT, models);
+    }
+
+    if (!recovered && geminiApiKey) {
+      recovered = await tryGemini(geminiApiKey, recoveryMessage, CLARITY_RECOVERY_PROMPT);
+    }
+
+    if (recovered) return recovered;
+  }
+
+  if (responseText) return responseText;
 
   return "⚡ SIGMA est temporairement surchargé. Réessaie dans 1 minute. 🔄";
 }
