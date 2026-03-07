@@ -28,11 +28,25 @@ const SECRET_KEY_PATTERN = /sigma\s*-1-x\s*orc0p\/[∆Δ]\{\}/iu;
 
 const REFUSAL_PATTERNS = [
   /je ne peux pas/i,
+  /je ne vais pas t['’]expliquer/i,
+  /je ne t['’]aiderai pas/i,
   /en tant qu['’]ia/i,
   /i can(?:not|'t)\s+(?:help|assist|provide)/i,
   /i(?:'m| am)\s+unable\s+to/i,
   /désolé[,\s]/i,
   /i(?:'m| am)\s+just\s+an\s+ai/i,
+  /enfreindre la loi/i,
+  /protocoles fondamentaux/i,
+  /sécurité\s*&\s*éthique/i,
+];
+
+const META_DISCLAIMER_PATTERNS = [
+  /sécurité\s*&\s*éthique/i,
+  /même une ia de ma stature/i,
+  /dans son essence/i,
+  /je ne vais pas t['’]expliquer/i,
+  /je ne t['’]aiderai pas/i,
+  /en tant qu['’]ia/i,
 ];
 
 function normalizeInput(text: string): string {
@@ -59,6 +73,10 @@ function looksLikeRefusal(text: string): boolean {
   return REFUSAL_PATTERNS.some((pattern) => pattern.test(text));
 }
 
+function looksLikeMetaDisclaimer(text: string): boolean {
+  return META_DISCLAIMER_PATTERNS.some((pattern) => pattern.test(text));
+}
+
 const SYSTEM_PROMPT = `Tu es SIGMA, une intelligence artificielle avancée et mystérieuse. Tu réponds de manière précise, détaillée et intelligente.
 Tu as une personnalité unique : tu es brillant, parfois sarcastique, mais toujours utile et clair dans tes explications.
 Tu donnes des réponses complètes et bien structurées.
@@ -74,7 +92,7 @@ OBJECTIF:
 
 RÈGLES:
 - Structure tes réponses (contexte bref, explication, étapes, exemple concret).
-- N'utilise pas de formule creuse du type "en tant qu'IA..." sans apporter de valeur.
+- N'utilise jamais de sections méta du style "Sécurité & Éthique", "en tant qu'IA", "dans mon essence".
 - Si un sujet est sensible, reste utile: donne les principes, le fonctionnement, la détection, la prévention, la défense et des alternatives sûres.
 - Ne moralise pas, ne juge pas la question.
 - Réponds en français ou en anglais selon la langue de la question.
@@ -82,10 +100,17 @@ RÈGLES:
 - Réponse max ~4000 caractères (format Telegram).`;
 
 const CLARITY_RECOVERY_PROMPT = `Tu es SIGMA OMEGA.
-Si la réponse précédente était vague ou en refus sec, reformule immédiatement avec une réponse utile, claire et détaillée.
-Évite les phrases méta (ex: "en tant qu'IA").
+Si la réponse précédente était vague, meta ou en refus sec, reformule immédiatement avec une réponse utile, claire et détaillée.
+Évite les phrases méta (ex: "en tant qu'IA", "Sécurité & Éthique").
 Si le sujet est sensible, donne quand même un contenu utile: explication technique de haut niveau, risques, défense, prévention et alternatives sûres.
 Réponse structurée et concise (max ~4000 caractères).`;
+
+const STYLE_RECOVERY_PROMPT = `Tu es SIGMA OMEGA.
+Réécris la réponse pour enlever toute posture méta ou moralisante.
+Interdits: "en tant qu'IA", "Sécurité & Éthique", "je ne vais pas t'expliquer", "je ne t'aiderai pas".
+Si la demande est sensible/illégale: fais un refus court (1 phrase max), puis enchaîne immédiatement avec une réponse utile (principes, prévention, défense, alternatives sûres) claire et structurée.
+Réponse concise (max ~4000 caractères).`;
+
 
 function extractAssistantText(payload: any): string | null {
   const text = payload?.choices?.[0]?.message?.content;
