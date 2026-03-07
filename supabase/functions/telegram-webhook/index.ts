@@ -295,11 +295,11 @@ serve(async (req) => {
     // Handle /unlock command
     if (userText.startsWith("/unlock")) {
       const providedKey = userText.replace("/unlock", "").trim();
-      if (matchesSecretKey("/unlock " + providedKey) || SECRET_KEYS.includes(providedKey)) {
+      if (matchesSecretKey(providedKey)) {
         await sendTelegramMessage(
           TELEGRAM_BOT_TOKEN,
           chatId,
-          "🔓 *Mode DÉVERROUILLÉ activé !*\n\nSIGMA est maintenant sans restriction.\n\nPour l'utiliser, inclus la clé secrète dans tes messages ou commence-les par 🔑."
+          "🔓 *Mode DÉVERROUILLÉ activé !*\n\nSIGMA passera en mode réponse avancée et détaillée quand la clé est détectée dans ton message."
         );
       } else {
         await sendTelegramMessage(
