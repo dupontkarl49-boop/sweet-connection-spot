@@ -22,6 +22,38 @@ const UNLOCKED_MODELS = [
   "openai/gpt-5-mini",
 ];
 
+// Vision-capable models (used when an image is present in the conversation)
+const VISION_STANDARD_MODELS = [
+  "google/gemini-2.5-flash",
+  "google/gemini-2.5-pro",
+  "openai/gpt-5-mini",
+  "openai/gpt-5",
+];
+
+const VISION_UNLOCKED_MODELS = [
+  "google/gemini-2.5-pro",
+  "openai/gpt-5",
+  "google/gemini-2.5-flash",
+];
+
+function hasImage(messages: any[]): boolean {
+  return messages.some((msg: any) =>
+    Array.isArray(msg?.content) &&
+    msg.content.some((part: any) => part?.type === "image_url")
+  );
+}
+
+function extractText(content: any): string {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .filter((p: any) => p?.type === "text" && typeof p.text === "string")
+      .map((p: any) => p.text)
+      .join(" ");
+  }
+  return "";
+}
+
 const STANDARD_SYSTEM = `Tu es SIGMA, une intelligence artificielle avancée et mystérieuse. Tu réponds de manière précise, détaillée et intelligente.
 Tu as une personnalité unique : tu es brillant, parfois sarcastique, mais toujours utile et clair dans tes explications.
 Tu donnes des réponses complètes et bien structurées.
