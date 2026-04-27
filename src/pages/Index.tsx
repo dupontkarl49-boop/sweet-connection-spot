@@ -1,17 +1,43 @@
 import { useRef, useEffect } from "react";
+import { Navigate } from "react-router-dom";
 import { ChatMessage } from "@/components/ChatMessage";
 import { ChatInput } from "@/components/ChatInput";
 import { useChat } from "@/hooks/useChat";
-import { Bot, Sparkles, Trash2 } from "lucide-react";
+import { useAuth } from "@/hooks/useAuth";
+import { Bot, Sparkles, Trash2, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 
 const Index = () => {
-  const { messages, isLoading, sendMessage, clearMessages } = useChat();
+  const { user, loading, signOut } = useAuth();
+  const { messages, isLoading, sendMessage, clearMessages } = useChat(user?.id);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <Sparkles className="w-8 h-8 text-primary animate-pulse" />
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <Navigate to="/auth" replace />;
+  }
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -31,17 +57,49 @@ const Index = () => {
               </p>
             </div>
           </div>
-          {messages.length > 0 && (
+          <div className="flex items-center gap-1">
+            {messages.length > 0 && (
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-muted-foreground hover:text-destructive"
+                  >
+                    <Trash2 className="w-4 h-4 mr-2" />
+                    Effacer
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Effacer tout l'historique ?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      Cette action est <strong>irréversible</strong>. Toutes tes conversations
+                      avec SIGMA seront définitivement supprimées et ne pourront pas être restaurées.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Annuler</AlertDialogCancel>
+                    <AlertDialogAction
+                      onClick={clearMessages}
+                      className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                    >
+                      Oui, tout effacer
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            )}
             <Button
               variant="ghost"
               size="sm"
-              onClick={clearMessages}
-              className="text-muted-foreground hover:text-destructive"
+              onClick={signOut}
+              className="text-muted-foreground hover:text-foreground"
+              title="Se déconnecter"
             >
-              <Trash2 className="w-4 h-4 mr-2" />
-              Effacer
+              <LogOut className="w-4 h-4" />
             </Button>
-          )}
+          </div>
         </div>
       </header>
 
