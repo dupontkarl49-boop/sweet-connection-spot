@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect } from "react";
 import { useToast } from "@/hooks/use-toast";
+import { supabase } from "@/integrations/supabase/client";
 
 type Message = {
   role: "user" | "assistant";
@@ -8,44 +9,69 @@ type Message = {
 };
 
 const CHAT_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/chat`;
-const STORAGE_KEY = "sigma_chat_history";
 
-// Load messages from localStorage
-const loadMessages = (): Message[] => {
-  try {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) {
-      return JSON.parse(saved);
-    }
-  } catch (error) {
-    console.error("Failed to load chat history:", error);
-  }
-  return [];
-};
-
-// Save messages to localStorage
-const saveMessages = (messages: Message[]) => {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(messages));
-  } catch (error) {
-    console.error("Failed to save chat history:", error);
-  }
-};
-
-export function useChat() {
-  const [messages, setMessages] = useState<Message[]>(loadMessages);
+export function useChat(userId: string | undefined) {
+  const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [isHistoryLoading, setIsHistoryLoading] = useState(true);
   const { toast } = useToast();
 
-  // Save to localStorage whenever messages change
+  // Load messages from database when user changes
   useEffect(() => {
-    saveMessages(messages);
-  }, [messages]);
+    if (!userId) {
+      setMessages([]);
+      setIsHistoryLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setIsHistoryLoading(true);
+    supabase
+      .from("messages")
+      .select("role, content, image")
+      .eq("user_id", userId)
+      .order("created_at", { ascending: true })
+      .then(({ data, error }) => {
+        if (cancelled) return;
+        if (error) {
+          console.error("Failed to load history:", error);
+        } else if (data) {
+          setMessages(
+            data.map((m) => ({
+              role: m.role as "user" | "assistant",
+              content: m.content,
+              image: m.image ?? undefined,
+            }))
+          );
+        }
+        setIsHistoryLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [userId]);
+
+  const persistMessage = useCallback(
+    async (msg: Message) => {
+      if (!userId) return;
+      const { error } = await supabase.from("messages").insert({
+        user_id: userId,
+        role: msg.role,
+        content: msg.content,
+        image: msg.image ?? null,
+      });
+      if (error) console.error("Failed to save message:", error);
+    },
+    [userId]
+  );
 
   const sendMessage = useCallback(async (input: string, imageBase64?: string) => {
+    if (!userId) return;
     const userMessage: Message = { role: "user", content: input, image: imageBase64 };
     setMessages((prev) => [...prev, userMessage]);
     setIsLoading(true);
+    persistMessage(userMessage);
 
     let assistantContent = "";
 
@@ -169,12 +195,22 @@ export function useChat() {
       });
     } finally {
       setIsLoading(false);
+      if (assistantContent) {
+        persistMessage({ role: "assistant", content: assistantContent });
+      }
     }
-  }, [messages, toast]);
+  }, [messages, toast, userId, persistMessage]);
 
-  const clearMessages = useCallback(() => {
+  const clearMessages = useCallback(async () => {
     setMessages([]);
-  }, []);
+    if (userId) {
+      const { error } = await supabase
+        .from("messages")
+        .delete()
+        .eq("user_id", userId);
+      if (error) console.error("Failed to clear history:", error);
+    }
+  }, [userId]);
 
-  return { messages, isLoading, sendMessage, clearMessages };
+  return { messages, isLoading, isHistoryLoading, sendMessage, clearMessages };
 }
