@@ -9,6 +9,31 @@ type Message = {
 };
 
 const CHAT_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/chat`;
+const LEGACY_HISTORY_KEY = "sigma_chat_history";
+
+const normalizeMessage = (value: unknown): Message | null => {
+  if (!value || typeof value !== "object") return null;
+  const message = value as Partial<Message>;
+  if (message.role !== "user" && message.role !== "assistant") return null;
+  return {
+    role: message.role,
+    content: typeof message.content === "string" ? message.content : "",
+    image: typeof message.image === "string" ? message.image : undefined,
+  };
+};
+
+const loadLegacyHistory = (): Message[] => {
+  try {
+    const raw = localStorage.getItem(LEGACY_HISTORY_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map(normalizeMessage).filter((msg): msg is Message => Boolean(msg));
+  } catch (error) {
+    console.error("Failed to read legacy history:", error);
+    return [];
+  }
+};
 
 export function useChat(userId: string | undefined) {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -31,18 +56,38 @@ export function useChat(userId: string | undefined) {
       .select("role, content, image")
       .eq("user_id", userId)
       .order("created_at", { ascending: true })
-      .then(({ data, error }) => {
+      .then(async ({ data, error }) => {
         if (cancelled) return;
         if (error) {
           console.error("Failed to load history:", error);
         } else if (data) {
-          setMessages(
-            data.map((m) => ({
-              role: m.role as "user" | "assistant",
-              content: m.content,
-              image: m.image ?? undefined,
-            }))
-          );
+          const cloudMessages = data.map((m) => ({
+            role: m.role as "user" | "assistant",
+            content: m.content,
+            image: m.image ?? undefined,
+          }));
+          const legacyMessages = loadLegacyHistory();
+          const migrationKey = `${LEGACY_HISTORY_KEY}_migrated_${userId}`;
+          const shouldMigrateLegacy = legacyMessages.length > 0 && !localStorage.getItem(migrationKey);
+
+          if (shouldMigrateLegacy) {
+            const { error: migrationError } = await supabase.from("messages").insert(
+              legacyMessages.map((msg) => ({
+                user_id: userId,
+                role: msg.role,
+                content: msg.content,
+                image: msg.image ?? null,
+              }))
+            );
+
+            if (migrationError) {
+              console.error("Failed to migrate legacy history:", migrationError);
+            } else {
+              localStorage.setItem(migrationKey, "true");
+            }
+          }
+
+          setMessages(shouldMigrateLegacy ? [...legacyMessages, ...cloudMessages] : cloudMessages);
         }
         setIsHistoryLoading(false);
       });
