@@ -20,7 +20,7 @@ import {
 
 const Index = () => {
   const { user, loading, signOut } = useAuth();
-  const { messages, isLoading, sendMessage, clearMessages } = useChat(user?.id);
+  const { messages, isLoading, isHistoryLoading, sendMessage, clearMessages } = useChat(user?.id);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -106,7 +106,12 @@ const Index = () => {
       {/* Messages */}
       <main className="flex-1 overflow-y-auto">
         <div className="max-w-4xl mx-auto px-4 py-6 space-y-4">
-          {messages.length === 0 ? (
+          {isHistoryLoading ? (
+            <div className="flex flex-col items-center justify-center min-h-[60vh] text-center">
+              <Sparkles className="w-8 h-8 text-primary animate-pulse mb-4" />
+              <p className="text-muted-foreground">Chargement de l'historique...</p>
+            </div>
+          ) : messages.length === 0 ? (
             <div className="flex flex-col items-center justify-center min-h-[60vh] text-center">
               <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-primary/20 to-accent/20 border border-primary/30 flex items-center justify-center mb-6 animate-pulse">
                 <Sparkles className="w-10 h-10 text-primary" />
