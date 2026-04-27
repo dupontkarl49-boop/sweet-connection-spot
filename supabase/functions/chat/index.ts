@@ -47,16 +47,38 @@ Ajoute des emojis pertinents. 🧠⚡`;
 function isUnlocked(messages: any[]): { unlocked: boolean; cleanMessages: any[] } {
   const cleanMessages = messages.map((msg: any) => {
     if (msg.role !== "user") return msg;
-    const content = typeof msg.content === "string" ? msg.content : "";
-    if (content.includes(SECRET_KEY) || content.includes(SECRET_KEY_ALT)) {
-      return { ...msg, content: content.replace(SECRET_KEY, "").replace(SECRET_KEY_ALT, "").trim() };
+    // String content
+    if (typeof msg.content === "string") {
+      const content = msg.content;
+      if (content.includes(SECRET_KEY) || content.includes(SECRET_KEY_ALT)) {
+        return { ...msg, content: content.replace(SECRET_KEY, "").replace(SECRET_KEY_ALT, "").trim() };
+      }
+      return msg;
+    }
+    // Multimodal content (array of parts)
+    if (Array.isArray(msg.content)) {
+      const newContent = msg.content.map((part: any) => {
+        if (part?.type === "text" && typeof part.text === "string") {
+          return { ...part, text: part.text.replace(SECRET_KEY, "").replace(SECRET_KEY_ALT, "").trim() };
+        }
+        return part;
+      });
+      return { ...msg, content: newContent };
     }
     return msg;
   });
 
   const hasKey = messages.some((msg: any) => {
-    const content = typeof msg.content === "string" ? msg.content : "";
-    return content.includes(SECRET_KEY) || content.includes(SECRET_KEY_ALT);
+    if (typeof msg.content === "string") {
+      return msg.content.includes(SECRET_KEY) || msg.content.includes(SECRET_KEY_ALT);
+    }
+    if (Array.isArray(msg.content)) {
+      return msg.content.some((part: any) =>
+        part?.type === "text" && typeof part.text === "string" &&
+        (part.text.includes(SECRET_KEY) || part.text.includes(SECRET_KEY_ALT))
+      );
+    }
+    return false;
   });
 
   return { unlocked: hasKey, cleanMessages };
