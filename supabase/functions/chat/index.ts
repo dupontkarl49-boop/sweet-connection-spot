@@ -241,49 +241,58 @@ serve(async (req) => {
 
     // PRIORITY 1: Gemini direct (free, 15 req/min) — preserves Lovable credits
     if (GEMINI_API_KEY) {
-      try {
-        const geminiModel = containsImage ? "gemini-2.0-flash" : "gemini-2.0-flash";
-        const response = await fetch("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${GEMINI_API_KEY}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            model: geminiModel,
-            messages: allMessages,
-            stream: !unlocked,
-          }),
-        });
+      // Try several Gemini models in cascade. Each has its own free quota.
+      const geminiModels = [
+        "gemini-2.5-flash",
+        "gemini-2.0-flash",
+        "gemini-2.5-flash-lite",
+        "gemini-1.5-flash",
+      ];
+      for (const geminiModel of geminiModels) {
+        try {
+          const response = await fetch("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${GEMINI_API_KEY}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              model: geminiModel,
+              messages: allMessages,
+              stream: !unlocked,
+            }),
+          });
 
-        if (response.ok) {
-          if (unlocked) {
-            // Non-streaming for refusal detection
-            const data = await response.json();
-            const content = data?.choices?.[0]?.message?.content;
-            if (content) {
-              const lower = content.toLowerCase();
-              const isRefusal = REFUSAL_PATTERNS.some(p => lower.includes(p));
-              if (!isRefusal) {
-                return new Response(
-                  JSON.stringify({ choices: [{ message: { content } }] }),
-                  { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-                );
+          if (response.ok) {
+            console.log(`Gemini direct OK with ${geminiModel}`);
+            if (unlocked) {
+              const data = await response.json();
+              const content = data?.choices?.[0]?.message?.content;
+              if (content) {
+                const lower = content.toLowerCase();
+                const isRefusal = REFUSAL_PATTERNS.some(p => lower.includes(p));
+                if (!isRefusal) {
+                  return new Response(
+                    JSON.stringify({ choices: [{ message: { content } }] }),
+                    { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                  );
+                }
+                console.log(`Gemini ${geminiModel} refused, trying next`);
+                continue;
               }
-              // Refusal -> fall through to Lovable AI for recovery
-              console.log("Gemini refused, falling back to Lovable AI");
+            } else {
+              return new Response(response.body, {
+                headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
+              });
             }
           } else {
-            return new Response(response.body, {
-              headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
-            });
+            const errText = await response.text().catch(() => "");
+            console.log(`Gemini ${geminiModel} failed (${response.status}): ${errText.slice(0, 200)}`);
+            // 429 = quota, try next model
           }
-        } else {
-          console.log(`Gemini direct failed (${response.status}), falling back to Lovable AI`);
-          await response.text().catch(() => {});
+        } catch (err) {
+          console.error(`Gemini ${geminiModel} error:`, err);
         }
-      } catch (err) {
-        console.error("Gemini direct error, falling back:", err);
       }
     }
 
