@@ -239,9 +239,57 @@ serve(async (req) => {
 
     const allMessages = [{ role: "system", content: systemPrompt }, ...cleanMessages];
 
+    // PRIORITY 1: Gemini direct (free, 15 req/min) — preserves Lovable credits
+    if (GEMINI_API_KEY) {
+      try {
+        const geminiModel = containsImage ? "gemini-2.0-flash" : "gemini-2.0-flash";
+        const response = await fetch("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${GEMINI_API_KEY}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: geminiModel,
+            messages: allMessages,
+            stream: !unlocked,
+          }),
+        });
+
+        if (response.ok) {
+          if (unlocked) {
+            // Non-streaming for refusal detection
+            const data = await response.json();
+            const content = data?.choices?.[0]?.message?.content;
+            if (content) {
+              const lower = content.toLowerCase();
+              const isRefusal = REFUSAL_PATTERNS.some(p => lower.includes(p));
+              if (!isRefusal) {
+                return new Response(
+                  JSON.stringify({ choices: [{ message: { content } }] }),
+                  { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
+              }
+              // Refusal -> fall through to Lovable AI for recovery
+              console.log("Gemini refused, falling back to Lovable AI");
+            }
+          } else {
+            return new Response(response.body, {
+              headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
+            });
+          }
+        } else {
+          console.log(`Gemini direct failed (${response.status}), falling back to Lovable AI`);
+          await response.text().catch(() => {});
+        }
+      } catch (err) {
+        console.error("Gemini direct error, falling back:", err);
+      }
+    }
+
+    // PRIORITY 2: Lovable AI Gateway (fallback safety net)
     if (LOVABLE_API_KEY) {
       if (unlocked) {
-        // Non-streaming for unlocked mode to enable refusal detection + recovery
         const content = await tryNonStreamingWithRecovery(LOVABLE_API_KEY, allMessages, models);
         if (content) {
           return new Response(
@@ -256,27 +304,6 @@ serve(async (req) => {
             headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
           });
         }
-      }
-    }
-
-    // Gemini fallback
-    if (GEMINI_API_KEY) {
-      try {
-        const response = await fetch("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${GEMINI_API_KEY}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ model: "gemini-2.0-flash", messages: allMessages, stream: true }),
-        });
-        if (response.ok) {
-          return new Response(response.body, {
-            headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
-          });
-        }
-      } catch (err) {
-        console.error("Gemini fallback error:", err);
       }
     }
 
