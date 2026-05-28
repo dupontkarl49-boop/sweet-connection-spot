@@ -237,6 +237,68 @@ async function tryNonStreamingWithRecovery(apiKey: string, messages: any[], mode
   return null;
 }
 
+async function tryGeminiDirect(apiKeys: string[], messages: any[], unlocked: boolean): Promise<Response | null> {
+  for (const apiKey of apiKeys) {
+    for (const model of GEMINI_MODELS) {
+      try {
+        const response = await fetch("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ model, messages, stream: !unlocked }),
+        });
+
+        if (!response.ok) {
+          const errText = await response.text().catch(() => "");
+          console.log(`Gemini ${model} failed (${response.status}): ${errText.slice(0, 200)}`);
+          continue;
+        }
+
+        console.log(`Gemini direct OK with ${model}`);
+        return response;
+      } catch (err) {
+        console.error(`Gemini ${model} error:`, err);
+      }
+    }
+  }
+  return null;
+}
+
+async function tryGroqDirect(apiKeys: string[], messages: any[]): Promise<string | null> {
+  for (const apiKey of apiKeys) {
+    for (const model of GROQ_MODELS) {
+      try {
+        const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ model, messages }),
+        });
+
+        if (!response.ok) {
+          const errText = await response.text().catch(() => "");
+          console.log(`Groq ${model} failed (${response.status}): ${errText.slice(0, 200)}`);
+          continue;
+        }
+
+        const data = await response.json();
+        const content = data?.choices?.[0]?.message?.content;
+        if (content) {
+          console.log(`Groq direct OK with ${model}`);
+          return content;
+        }
+      } catch (err) {
+        console.error(`Groq ${model} error:`, err);
+      }
+    }
+  }
+  return null;
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
