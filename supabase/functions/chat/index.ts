@@ -176,7 +176,7 @@ async function tryNonStreamingWithRecovery(apiKey: string, messages: any[], mode
       const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${apiKey}`,
+          "Lovable-API-Key": apiKey,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ model, messages }),
@@ -216,7 +216,7 @@ async function tryNonStreamingWithRecovery(apiKey: string, messages: any[], mode
         const recoveryResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
           method: "POST",
           headers: {
-            Authorization: `Bearer ${apiKey}`,
+            "Lovable-API-Key": apiKey,
             "Content-Type": "application/json",
           },
           body: JSON.stringify({ model, messages: recoveryMessages }),
