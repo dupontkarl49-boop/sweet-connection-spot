@@ -36,6 +36,24 @@ const VISION_UNLOCKED_MODELS = [
   "google/gemini-2.5-flash",
 ];
 
+const GEMINI_MODELS = [
+  "gemini-2.5-flash",
+  "gemini-2.0-flash",
+  "gemini-2.5-flash-lite",
+  "gemini-1.5-flash",
+];
+
+const GROQ_MODELS = [
+  "llama-3.3-70b-versatile",
+  "llama-3.1-8b-instant",
+];
+
+const getConfiguredKeys = (primary?: string, ...extras: Array<string | undefined>) =>
+  [primary, ...extras]
+    .flatMap((value) => (value ?? "").split(","))
+    .map((value) => value.trim())
+    .filter(Boolean);
+
 function hasImage(messages: any[]): boolean {
   return messages.some((msg: any) =>
     Array.isArray(msg?.content) &&
@@ -123,7 +141,7 @@ async function tryModels(apiKey: string, messages: any[], models: string[]): Pro
       const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${apiKey}`,
+          "Lovable-API-Key": apiKey,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ model, messages, stream: true }),
