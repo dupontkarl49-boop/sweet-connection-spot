@@ -257,6 +257,18 @@ async function tryGeminiDirect(apiKeys: string[], messages: any[], unlocked: boo
         }
 
         console.log(`Gemini direct OK with ${model}`);
+        if (unlocked) {
+          const data = await response.json();
+          const content = data?.choices?.[0]?.message?.content;
+          if (!content) continue;
+          const lower = content.toLowerCase();
+          const refused = REFUSAL_PATTERNS.some((p) => lower.includes(p));
+          if (refused) continue;
+          return new Response(
+            JSON.stringify({ choices: [{ message: { content } }] }),
+            { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
         return response;
       } catch (err) {
         console.error(`Gemini ${model} error:`, err);
