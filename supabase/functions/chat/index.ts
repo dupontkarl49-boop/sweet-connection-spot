@@ -319,7 +319,6 @@ serve(async (req) => {
   try {
     const { messages } = await req.json();
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY");
 
     const { unlocked, cleanMessages } = isUnlocked(messages);
     const systemPrompt = unlocked ? UNLOCKED_SYSTEM : STANDARD_SYSTEM;
@@ -331,64 +330,32 @@ serve(async (req) => {
 
     const allMessages = [{ role: "system", content: systemPrompt }, ...cleanMessages];
 
-    // PRIORITY 1: Gemini direct (free, 15 req/min) — preserves Lovable credits
-    if (GEMINI_API_KEY) {
-      // Try several Gemini models in cascade. Each has its own free quota.
-      const geminiModels = [
-        "gemini-2.5-flash",
-        "gemini-2.0-flash",
-        "gemini-2.5-flash-lite",
-        "gemini-1.5-flash",
-      ];
-      for (const geminiModel of geminiModels) {
-        try {
-          const response = await fetch("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${GEMINI_API_KEY}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              model: geminiModel,
-              messages: allMessages,
-              stream: !unlocked,
-            }),
-          });
+    const geminiKeys = getConfiguredKeys(
+      Deno.env.get("GEMINI_API_KEY"),
+      Deno.env.get("GEMINI_API_KEYS"),
+      Deno.env.get("GEMINI_API_KEY_2"),
+      Deno.env.get("GEMINI_API_KEY_3"),
+    );
+    const geminiResponse = await tryGeminiDirect(geminiKeys, allMessages, unlocked);
+    if (geminiResponse) {
+      if (unlocked) return geminiResponse;
+      return new Response(geminiResponse.body, {
+        headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
+      });
+    }
 
-          if (response.ok) {
-            console.log(`Gemini direct OK with ${geminiModel}`);
-            if (unlocked) {
-              const data = await response.json();
-              const content = data?.choices?.[0]?.message?.content;
-              if (content) {
-                const lower = content.toLowerCase();
-                const isRefusal = REFUSAL_PATTERNS.some(p => lower.includes(p));
-                if (!isRefusal) {
-                  return new Response(
-                    JSON.stringify({ choices: [{ message: { content } }] }),
-                    { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-                  );
-                }
-                console.log(`Gemini ${geminiModel} refused, trying next`);
-                continue;
-              }
-            } else {
-              return new Response(response.body, {
-                headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
-              });
-            }
-          } else {
-            const errText = await response.text().catch(() => "");
-            console.log(`Gemini ${geminiModel} failed (${response.status}): ${errText.slice(0, 200)}`);
-            // 429 = quota, try next model
-          }
-        } catch (err) {
-          console.error(`Gemini ${geminiModel} error:`, err);
-        }
+    const groqKeys = getConfiguredKeys(Deno.env.get("GROQ_API_KEY"), Deno.env.get("GROQ_API_KEYS"));
+    if (!containsImage) {
+      const groqContent = await tryGroqDirect(groqKeys, allMessages);
+      if (groqContent) {
+        return new Response(
+          JSON.stringify({ choices: [{ message: { content: groqContent } }] }),
+          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
       }
     }
 
-    // PRIORITY 2: Lovable AI Gateway (fallback safety net)
+    // PRIORITY 3: Lovable AI Gateway (fallback safety net)
     if (LOVABLE_API_KEY) {
       if (unlocked) {
         const content = await tryNonStreamingWithRecovery(LOVABLE_API_KEY, allMessages, models);
