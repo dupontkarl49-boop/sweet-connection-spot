@@ -359,13 +359,14 @@ serve(async (req) => {
 
     const { unlocked, cleanMessages } = isUnlocked(messages);
     const systemPrompt = unlocked ? UNLOCKED_SYSTEM : STANDARD_SYSTEM;
-    const containsImage = hasImage(cleanMessages);
+    const containsImage = hasImageInLastUserMessage(cleanMessages);
     const models = containsImage
       ? (unlocked ? VISION_UNLOCKED_MODELS : VISION_STANDARD_MODELS)
       : (unlocked ? UNLOCKED_MODELS : STANDARD_MODELS);
     console.log(`Mode: unlocked=${unlocked}, image=${containsImage}, models=${models.join(",")}`);
 
-    const allMessages = [{ role: "system", content: systemPrompt }, ...cleanMessages];
+    const providerMessages = prepareMessagesForProvider(cleanMessages, containsImage);
+    const allMessages = [{ role: "system", content: systemPrompt }, ...providerMessages];
 
     const geminiKeys = getConfiguredKeys(
       Deno.env.get("GEMINI_API_KEY"),
