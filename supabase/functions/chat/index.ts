@@ -61,6 +61,12 @@ function hasImage(messages: any[]): boolean {
   );
 }
 
+function hasImageInLastUserMessage(messages: any[]): boolean {
+  const lastUser = [...messages].reverse().find((msg: any) => msg?.role === "user");
+  return Array.isArray(lastUser?.content) &&
+    lastUser.content.some((part: any) => part?.type === "image_url");
+}
+
 function extractText(content: any): string {
   if (typeof content === "string") return content;
   if (Array.isArray(content)) {
@@ -70,6 +76,37 @@ function extractText(content: any): string {
       .join(" ");
   }
   return "";
+}
+
+function isOverloadMessage(content: string): boolean {
+  const lower = content.toLowerCase();
+  return lower.includes("sigma est temporairement") ||
+    lower.includes("surcharge") ||
+    lower.includes("réessaie dans 1 minute") ||
+    lower.includes("reessaie dans 1 minute");
+}
+
+function prepareMessagesForProvider(messages: any[], includeCurrentImage: boolean): any[] {
+  const lastUserIndex = messages.map((msg: any) => msg?.role).lastIndexOf("user");
+  const filtered = messages
+    .filter((msg: any) => msg?.role === "user" || msg?.role === "assistant")
+    .filter((msg: any) => !(msg.role === "assistant" && isOverloadMessage(extractText(msg.content))))
+    .slice(-24)
+    .map((msg: any, index: number, arr: any[]) => {
+      const originalIndex = messages.length - arr.length + index;
+      if (!Array.isArray(msg.content)) return msg;
+
+      const textParts = msg.content.filter((part: any) => part?.type === "text" && typeof part.text === "string");
+      const imageParts = msg.content.filter((part: any) => part?.type === "image_url");
+      const shouldKeepImage = includeCurrentImage && msg.role === "user" && originalIndex === lastUserIndex;
+
+      return {
+        ...msg,
+        content: shouldKeepImage ? [...textParts, ...imageParts] : extractText(msg.content),
+      };
+    });
+
+  return filtered.length > 0 ? filtered : messages.slice(-1);
 }
 
 const STANDARD_SYSTEM = `Tu es SIGMA, une intelligence artificielle avancée et mystérieuse. Tu réponds de manière précise, détaillée et intelligente.
