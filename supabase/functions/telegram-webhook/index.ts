@@ -161,8 +161,7 @@ async function tryGeminiDirect(apiKeys: string[], messages: any[], unlocked: boo
 
         const data = await response.json();
         const content = data?.choices?.[0]?.message?.content;
-        if (typeof content !== "string" || !content.trim()) continue;
-        if (unlocked && isRefusal(content)) continue;
+        if (typeof content !== "string" || !isUsableProviderContent(content, unlocked)) continue;
         console.log(`Telegram Gemini OK with ${model}`);
         return content.trim();
       } catch (error) {
@@ -195,8 +194,7 @@ async function tryGroqDirect(apiKeys: string[], messages: any[], unlocked: boole
 
         const data = await response.json();
         const content = data?.choices?.[0]?.message?.content;
-        if (typeof content !== "string" || !content.trim()) continue;
-        if (unlocked && isRefusal(content)) continue;
+        if (typeof content !== "string" || !isUsableProviderContent(content, unlocked)) continue;
         console.log(`Telegram Groq OK with ${model}`);
         return content.trim();
       } catch (error) {
@@ -230,7 +228,7 @@ async function tryLovableGateway(apiKey: string, messages: any[], unlocked: bool
 
       const data = await response.json();
       const content = data?.choices?.[0]?.message?.content;
-      if (typeof content !== "string" || !content.trim()) continue;
+      if (typeof content !== "string" || !isUsableProviderContent(content, unlocked)) continue;
 
       // Refusal detection for unlocked mode
       if (unlocked) {
@@ -252,7 +250,7 @@ async function tryLovableGateway(apiKey: string, messages: any[], unlocked: bool
           if (recoveryRes.ok) {
             const recoveryData = await recoveryRes.json();
             const rc = recoveryData?.choices?.[0]?.message?.content;
-            if (rc?.trim()) return rc.trim();
+            if (typeof rc === "string" && isUsableProviderContent(rc, unlocked)) return rc.trim();
           }
         }
       }
@@ -273,16 +271,11 @@ async function getAIResponse(userMessage: string, unlocked: boolean): Promise<st
     { role: "user", content: userMessage },
   ];
 
-  const geminiKeys = getConfiguredKeys(
-    Deno.env.get("GEMINI_API_KEY"),
-    Deno.env.get("GEMINI_API_KEYS"),
-    Deno.env.get("GEMINI_API_KEY_2"),
-    Deno.env.get("GEMINI_API_KEY_3"),
-  );
+  const geminiKeys = getValidGeminiKeys();
   const geminiContent = await tryGeminiDirect(geminiKeys, messages, unlocked);
   if (geminiContent) return geminiContent;
 
-  const groqKeys = getConfiguredKeys(Deno.env.get("GROQ_API_KEY"), Deno.env.get("GROQ_API_KEYS"));
+  const groqKeys = getValidGroqKeys();
   const groqContent = await tryGroqDirect(groqKeys, messages, unlocked);
   if (groqContent) return groqContent;
 
