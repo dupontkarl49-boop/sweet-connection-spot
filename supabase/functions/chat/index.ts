@@ -333,7 +333,7 @@ async function tryGeminiDirect(apiKeys: string[], messages: any[], unlocked: boo
   return null;
 }
 
-async function tryGroqDirect(apiKeys: string[], messages: any[]): Promise<string | null> {
+async function tryGroqDirect(apiKeys: string[], messages: any[], unlocked: boolean): Promise<string | null> {
   for (const apiKey of apiKeys) {
     for (const model of GROQ_MODELS) {
       try {
@@ -354,7 +354,7 @@ async function tryGroqDirect(apiKeys: string[], messages: any[]): Promise<string
 
         const data = await response.json();
         const content = data?.choices?.[0]?.message?.content;
-        if (typeof content === "string" && isUsableProviderContent(content, false)) {
+        if (typeof content === "string" && isUsableProviderContent(content, unlocked)) {
           console.log(`Groq direct OK with ${model}`);
           return content;
         }
@@ -397,7 +397,7 @@ serve(async (req) => {
 
     const groqKeys = getValidGroqKeys();
     if (!containsImage) {
-      const groqContent = await tryGroqDirect(groqKeys, allMessages);
+      const groqContent = await tryGroqDirect(groqKeys, allMessages, unlocked);
       if (groqContent) {
         return new Response(
           JSON.stringify({ choices: [{ message: { content: groqContent } }] }),
