@@ -52,7 +52,20 @@ const getConfiguredKeys = (primary?: string, ...extras: Array<string | undefined
   [primary, ...extras]
     .flatMap((value) => (value ?? "").split(","))
     .map((value) => value.trim())
-    .filter(Boolean);
+    .filter(Boolean)
+    .filter((value, index, arr) => arr.indexOf(value) === index);
+
+const getValidGeminiKeys = () => getConfiguredKeys(
+  Deno.env.get("GEMINI_API_KEY"),
+  Deno.env.get("GEMINI_API_KEYS"),
+  Deno.env.get("GEMINI_API_KEY_2"),
+  Deno.env.get("GEMINI_API_KEY_3"),
+).filter((key) => key.startsWith("AIza"));
+
+const getValidGroqKeys = () => getConfiguredKeys(
+  Deno.env.get("GROQ_API_KEY"),
+  Deno.env.get("GROQ_API_KEYS"),
+).filter((key) => key.startsWith("gsk_"));
 
 function hasImage(messages: any[]): boolean {
   return messages.some((msg: any) =>
@@ -86,14 +99,22 @@ function isOverloadMessage(content: string): boolean {
     lower.includes("reessaie dans 1 minute");
 }
 
+function isUsableProviderContent(content: string, unlocked: boolean): boolean {
+  const trimmed = content.trim();
+  if (!trimmed || isOverloadMessage(trimmed)) return false;
+  if (!unlocked) return true;
+  const lower = trimmed.toLowerCase();
+  return !REFUSAL_PATTERNS.some((p) => lower.includes(p));
+}
+
 function prepareMessagesForProvider(messages: any[], includeCurrentImage: boolean): any[] {
   const lastUserIndex = messages.map((msg: any) => msg?.role).lastIndexOf("user");
   const filtered = messages
-    .filter((msg: any) => msg?.role === "user" || msg?.role === "assistant")
-    .filter((msg: any) => !(msg.role === "assistant" && isOverloadMessage(extractText(msg.content))))
+    .map((msg: any, originalIndex: number) => ({ msg, originalIndex }))
+    .filter(({ msg }: any) => msg?.role === "user" || msg?.role === "assistant")
+    .filter(({ msg }: any) => !(msg.role === "assistant" && isOverloadMessage(extractText(msg.content))))
     .slice(-24)
-    .map((msg: any, index: number, arr: any[]) => {
-      const originalIndex = messages.length - arr.length + index;
+    .map(({ msg, originalIndex }: any) => {
       if (!Array.isArray(msg.content)) return msg;
 
       const textParts = msg.content.filter((part: any) => part?.type === "text" && typeof part.text === "string");
@@ -223,7 +244,7 @@ async function tryNonStreamingWithRecovery(apiKey: string, messages: any[], mode
 
       const data = await response.json();
       const content = data?.choices?.[0]?.message?.content;
-      if (!content) continue;
+      if (typeof content !== "string" || !isUsableProviderContent(content, true)) continue;
 
       // Check for refusal
       const lower = content.toLowerCase();
@@ -262,7 +283,7 @@ async function tryNonStreamingWithRecovery(apiKey: string, messages: any[], mode
         if (recoveryResponse.ok) {
           const recoveryData = await recoveryResponse.json();
           const recoveryContent = recoveryData?.choices?.[0]?.message?.content;
-          if (recoveryContent) return recoveryContent;
+            if (typeof recoveryContent === "string" && isUsableProviderContent(recoveryContent, true)) return recoveryContent;
         }
       }
 
@@ -297,10 +318,7 @@ async function tryGeminiDirect(apiKeys: string[], messages: any[], unlocked: boo
         if (unlocked) {
           const data = await response.json();
           const content = data?.choices?.[0]?.message?.content;
-          if (!content) continue;
-          const lower = content.toLowerCase();
-          const refused = REFUSAL_PATTERNS.some((p) => lower.includes(p));
-          if (refused) continue;
+          if (typeof content !== "string" || !isUsableProviderContent(content, true)) continue;
           return new Response(
             JSON.stringify({ choices: [{ message: { content } }] }),
             { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -315,7 +333,7 @@ async function tryGeminiDirect(apiKeys: string[], messages: any[], unlocked: boo
   return null;
 }
 
-async function tryGroqDirect(apiKeys: string[], messages: any[]): Promise<string | null> {
+async function tryGroqDirect(apiKeys: string[], messages: any[], unlocked: boolean): Promise<string | null> {
   for (const apiKey of apiKeys) {
     for (const model of GROQ_MODELS) {
       try {
@@ -336,7 +354,7 @@ async function tryGroqDirect(apiKeys: string[], messages: any[]): Promise<string
 
         const data = await response.json();
         const content = data?.choices?.[0]?.message?.content;
-        if (content) {
+        if (typeof content === "string" && isUsableProviderContent(content, unlocked)) {
           console.log(`Groq direct OK with ${model}`);
           return content;
         }
@@ -368,12 +386,7 @@ serve(async (req) => {
     const providerMessages = prepareMessagesForProvider(cleanMessages, containsImage);
     const allMessages = [{ role: "system", content: systemPrompt }, ...providerMessages];
 
-    const geminiKeys = getConfiguredKeys(
-      Deno.env.get("GEMINI_API_KEY"),
-      Deno.env.get("GEMINI_API_KEYS"),
-      Deno.env.get("GEMINI_API_KEY_2"),
-      Deno.env.get("GEMINI_API_KEY_3"),
-    );
+    const geminiKeys = getValidGeminiKeys();
     const geminiResponse = await tryGeminiDirect(geminiKeys, allMessages, unlocked);
     if (geminiResponse) {
       if (unlocked) return geminiResponse;
@@ -382,9 +395,9 @@ serve(async (req) => {
       });
     }
 
-    const groqKeys = getConfiguredKeys(Deno.env.get("GROQ_API_KEY"), Deno.env.get("GROQ_API_KEYS"));
+    const groqKeys = getValidGroqKeys();
     if (!containsImage) {
-      const groqContent = await tryGroqDirect(groqKeys, allMessages);
+      const groqContent = await tryGroqDirect(groqKeys, allMessages, unlocked);
       if (groqContent) {
         return new Response(
           JSON.stringify({ choices: [{ message: { content: groqContent } }] }),
