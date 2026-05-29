@@ -70,7 +70,36 @@ const getConfiguredKeys = (primary?: string, ...extras: Array<string | undefined
   [primary, ...extras]
     .flatMap((value) => (value ?? "").split(","))
     .map((value) => value.trim())
-    .filter(Boolean);
+    .filter(Boolean)
+    .filter((value, index, arr) => arr.indexOf(value) === index);
+
+const getValidGeminiKeys = () => getConfiguredKeys(
+  Deno.env.get("GEMINI_API_KEY"),
+  Deno.env.get("GEMINI_API_KEYS"),
+  Deno.env.get("GEMINI_API_KEY_2"),
+  Deno.env.get("GEMINI_API_KEY_3"),
+).filter((key) => key.startsWith("AIza"));
+
+const getValidGroqKeys = () => getConfiguredKeys(
+  Deno.env.get("GROQ_API_KEY"),
+  Deno.env.get("GROQ_API_KEYS"),
+).filter((key) => key.startsWith("gsk_"));
+
+function isOverloadMessage(content: string): boolean {
+  const lower = content.toLowerCase();
+  return lower.includes("sigma est temporairement") ||
+    lower.includes("surcharge") ||
+    lower.includes("surchargé") ||
+    lower.includes("surchargé") ||
+    lower.includes("réessaie dans 1 minute") ||
+    lower.includes("reessaie dans 1 minute");
+}
+
+function isUsableProviderContent(content: string, unlocked: boolean): boolean {
+  const trimmed = content.trim();
+  if (!trimmed || isOverloadMessage(trimmed)) return false;
+  return !unlocked || !isRefusal(trimmed);
+}
 
 function isRefusal(content: string): boolean {
   const lower = content.toLowerCase();
