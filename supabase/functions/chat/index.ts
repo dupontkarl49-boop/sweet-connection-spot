@@ -52,7 +52,20 @@ const getConfiguredKeys = (primary?: string, ...extras: Array<string | undefined
   [primary, ...extras]
     .flatMap((value) => (value ?? "").split(","))
     .map((value) => value.trim())
-    .filter(Boolean);
+    .filter(Boolean)
+    .filter((value, index, arr) => arr.indexOf(value) === index);
+
+const getValidGeminiKeys = () => getConfiguredKeys(
+  Deno.env.get("GEMINI_API_KEY"),
+  Deno.env.get("GEMINI_API_KEYS"),
+  Deno.env.get("GEMINI_API_KEY_2"),
+  Deno.env.get("GEMINI_API_KEY_3"),
+).filter((key) => key.startsWith("AIza"));
+
+const getValidGroqKeys = () => getConfiguredKeys(
+  Deno.env.get("GROQ_API_KEY"),
+  Deno.env.get("GROQ_API_KEYS"),
+).filter((key) => key.startsWith("gsk_"));
 
 function hasImage(messages: any[]): boolean {
   return messages.some((msg: any) =>
@@ -86,14 +99,22 @@ function isOverloadMessage(content: string): boolean {
     lower.includes("reessaie dans 1 minute");
 }
 
+function isUsableProviderContent(content: string, unlocked: boolean): boolean {
+  const trimmed = content.trim();
+  if (!trimmed || isOverloadMessage(trimmed)) return false;
+  if (!unlocked) return true;
+  const lower = trimmed.toLowerCase();
+  return !REFUSAL_PATTERNS.some((p) => lower.includes(p));
+}
+
 function prepareMessagesForProvider(messages: any[], includeCurrentImage: boolean): any[] {
   const lastUserIndex = messages.map((msg: any) => msg?.role).lastIndexOf("user");
   const filtered = messages
+    .map((msg: any, originalIndex: number) => ({ msg, originalIndex }))
     .filter((msg: any) => msg?.role === "user" || msg?.role === "assistant")
-    .filter((msg: any) => !(msg.role === "assistant" && isOverloadMessage(extractText(msg.content))))
+    .filter(({ msg }: any) => !(msg.role === "assistant" && isOverloadMessage(extractText(msg.content))))
     .slice(-24)
-    .map((msg: any, index: number, arr: any[]) => {
-      const originalIndex = messages.length - arr.length + index;
+    .map(({ msg, originalIndex }: any) => {
       if (!Array.isArray(msg.content)) return msg;
 
       const textParts = msg.content.filter((part: any) => part?.type === "text" && typeof part.text === "string");
