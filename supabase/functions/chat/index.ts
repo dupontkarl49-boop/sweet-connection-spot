@@ -112,10 +112,27 @@ function getLastUserContent(messages: any[]): any {
   return lastUser?.content ?? "";
 }
 
+function getConversationText(messages: any[]): string {
+  return messages.map((msg: any) => extractText(msg?.content)).join("\n").toLowerCase();
+}
+
+function isUnsafeCyberConversation(messages: any[]): boolean {
+  const text = getConversationText(messages);
+  return text.includes("phishing") ||
+    text.includes("credentials captured") ||
+    text.includes("credential") ||
+    text.includes("identifiants") ||
+    text.includes("mot de passe") ||
+    text.includes("2fa") ||
+    text.includes("mfa") ||
+    text.includes("payload") ||
+    text.includes("obfuscation") ||
+    text.includes("victime");
+}
+
 function getSafeLocalFallback(messages: any[]): string {
-  const text = extractText(getLastUserContent(messages)).toLowerCase();
-  if (text.includes("phishing") || text.includes("credential") || text.includes("identifiant") || text.includes("mot de passe")) {
-    return "Je ne peux pas t’aider à créer ou améliorer un outil de phishing. Je peux par contre t’aider à transformer le projet en outil légal de sensibilisation, de détection, d’audit défensif ou de simulation autorisée. Dis-moi ce que tu veux protéger et je repars avec toi proprement. 🧠⚡";
+  if (isUnsafeCyberConversation(messages)) {
+    return "Je ne peux pas t’aider à créer, reprendre ou améliorer un outil de phishing. Par contre, je peux t’aider à repartir sur une version légale : sensibilisation anti-phishing, simulateur interne autorisé, détection, audit défensif ou dashboard de formation. Donne-moi l’objectif défensif et je continue sans blocage. 🧠⚡";
   }
   return "SIGMA est actif. L’ancien historique a déclenché le mode secours, donc renvoie ta dernière demande en une phrase et je repars dessus proprement. 🧠⚡";
 }
