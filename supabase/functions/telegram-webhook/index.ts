@@ -103,8 +103,8 @@ function isUsableProviderContent(content: string, unlocked: boolean): boolean {
 
 function getSafeLocalFallback(userMessage: string): string {
   const text = userMessage.toLowerCase();
-  if (text.includes("phishing") || text.includes("credential") || text.includes("identifiant") || text.includes("mot de passe")) {
-    return "Je ne peux pas t’aider à créer ou améliorer un outil de phishing. Je peux par contre t’aider à transformer le projet en outil légal de sensibilisation, de détection ou d’audit défensif. 🧠⚡";
+  if (text.includes("phishing") || text.includes("credential") || text.includes("identifiant") || text.includes("mot de passe") || text.includes("2fa") || text.includes("mfa") || text.includes("payload")) {
+    return "Je ne peux pas t’aider à créer ou améliorer un outil de phishing. Je peux par contre t’aider à transformer le projet en outil légal de sensibilisation, de détection, de simulation autorisée ou d’audit défensif. 🧠⚡";
   }
   return "SIGMA est actif. Le mode secours a nettoyé la requête : renvoie ta dernière demande en une phrase et je repars dessus proprement. 🧠⚡";
 }
@@ -278,6 +278,8 @@ async function getAIResponse(userMessage: string, unlocked: boolean): Promise<st
     { role: "system", content: systemPrompt },
     { role: "user", content: userMessage },
   ];
+
+  if (getSafeLocalFallback(userMessage).includes("phishing")) return getSafeLocalFallback(userMessage);
 
   const geminiKeys = getValidGeminiKeys();
   const geminiContent = await tryGeminiDirect(geminiKeys, messages, unlocked);
