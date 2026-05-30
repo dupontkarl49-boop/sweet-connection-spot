@@ -107,6 +107,19 @@ function isUsableProviderContent(content: string, unlocked: boolean): boolean {
   return !REFUSAL_PATTERNS.some((p) => lower.includes(p));
 }
 
+function getLastUserContent(messages: any[]): any {
+  const lastUser = [...messages].reverse().find((msg: any) => msg?.role === "user");
+  return lastUser?.content ?? "";
+}
+
+function getSafeLocalFallback(messages: any[]): string {
+  const text = extractText(getLastUserContent(messages)).toLowerCase();
+  if (text.includes("phishing") || text.includes("credential") || text.includes("identifiant") || text.includes("mot de passe")) {
+    return "Je ne peux pas t’aider à créer ou améliorer un outil de phishing. Je peux par contre t’aider à transformer le projet en outil légal de sensibilisation, de détection, d’audit défensif ou de simulation autorisée. Dis-moi ce que tu veux protéger et je repars avec toi proprement. 🧠⚡";
+  }
+  return "SIGMA est actif. L’ancien historique a déclenché le mode secours, donc renvoie ta dernière demande en une phrase et je repars dessus proprement. 🧠⚡";
+}
+
 function prepareMessagesForProvider(messages: any[], includeCurrentImage: boolean): any[] {
   const lastUserIndex = messages.map((msg: any) => msg?.role).lastIndexOf("user");
   const filtered = messages
