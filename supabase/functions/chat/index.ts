@@ -335,7 +335,7 @@ async function tryGeminiDirect(apiKeys: string[], messages: any[], unlocked: boo
             Authorization: `Bearer ${apiKey}`,
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({ model, messages, stream: !unlocked }),
+          body: JSON.stringify({ model, messages }),
         });
 
         if (!response.ok) {
@@ -345,16 +345,13 @@ async function tryGeminiDirect(apiKeys: string[], messages: any[], unlocked: boo
         }
 
         console.log(`Gemini direct OK with ${model}`);
-        if (unlocked) {
-          const data = await response.json();
-          const content = data?.choices?.[0]?.message?.content;
-          if (typeof content !== "string" || !isUsableProviderContent(content, true)) continue;
-          return new Response(
-            JSON.stringify({ choices: [{ message: { content } }] }),
-            { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-          );
-        }
-        return response;
+        const data = await response.json();
+        const content = data?.choices?.[0]?.message?.content;
+        if (typeof content !== "string" || !isUsableProviderContent(content, unlocked)) continue;
+        return new Response(
+          JSON.stringify({ choices: [{ message: { content } }] }),
+          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
       } catch (err) {
         console.error(`Gemini ${model} error:`, err);
       }
@@ -429,10 +426,7 @@ serve(async (req) => {
     const geminiKeys = getValidGeminiKeys();
     const geminiResponse = await tryGeminiDirect(geminiKeys, allMessages, unlocked);
     if (geminiResponse) {
-      if (unlocked) return geminiResponse;
-      return new Response(geminiResponse.body, {
-        headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
-      });
+      return geminiResponse;
     }
 
     const groqKeys = getValidGroqKeys();
@@ -468,10 +462,7 @@ serve(async (req) => {
 
     const rescueGeminiResponse = await tryGeminiDirect(geminiKeys, rescueMessages, unlocked);
     if (rescueGeminiResponse) {
-      if (unlocked) return rescueGeminiResponse;
-      return new Response(rescueGeminiResponse.body, {
-        headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
-      });
+      return rescueGeminiResponse;
     }
 
     if (!containsImage) {
