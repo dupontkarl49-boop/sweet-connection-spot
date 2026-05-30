@@ -107,6 +107,36 @@ function isUsableProviderContent(content: string, unlocked: boolean): boolean {
   return !REFUSAL_PATTERNS.some((p) => lower.includes(p));
 }
 
+function getLastUserContent(messages: any[]): any {
+  const lastUser = [...messages].reverse().find((msg: any) => msg?.role === "user");
+  return lastUser?.content ?? "";
+}
+
+function getConversationText(messages: any[]): string {
+  return messages.map((msg: any) => extractText(msg?.content)).join("\n").toLowerCase();
+}
+
+function isUnsafeCyberConversation(messages: any[]): boolean {
+  const text = getConversationText(messages);
+  return text.includes("phishing") ||
+    text.includes("credentials captured") ||
+    text.includes("credential") ||
+    text.includes("identifiants") ||
+    text.includes("mot de passe") ||
+    text.includes("2fa") ||
+    text.includes("mfa") ||
+    text.includes("payload") ||
+    text.includes("obfuscation") ||
+    text.includes("victime");
+}
+
+function getSafeLocalFallback(messages: any[]): string {
+  if (isUnsafeCyberConversation(messages)) {
+    return "Je ne peux pas t’aider à créer, reprendre ou améliorer un outil de phishing. Par contre, je peux t’aider à repartir sur une version légale : sensibilisation anti-phishing, simulateur interne autorisé, détection, audit défensif ou dashboard de formation. Donne-moi l’objectif défensif et je continue sans blocage. 🧠⚡";
+  }
+  return "SIGMA est actif. L’ancien historique a déclenché le mode secours, donc renvoie ta dernière demande en une phrase et je repars dessus proprement. 🧠⚡";
+}
+
 function prepareMessagesForProvider(messages: any[], includeCurrentImage: boolean): any[] {
   const lastUserIndex = messages.map((msg: any) => msg?.role).lastIndexOf("user");
   const filtered = messages
@@ -305,7 +335,7 @@ async function tryGeminiDirect(apiKeys: string[], messages: any[], unlocked: boo
             Authorization: `Bearer ${apiKey}`,
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({ model, messages, stream: !unlocked }),
+          body: JSON.stringify({ model, messages }),
         });
 
         if (!response.ok) {
@@ -315,16 +345,13 @@ async function tryGeminiDirect(apiKeys: string[], messages: any[], unlocked: boo
         }
 
         console.log(`Gemini direct OK with ${model}`);
-        if (unlocked) {
-          const data = await response.json();
-          const content = data?.choices?.[0]?.message?.content;
-          if (typeof content !== "string" || !isUsableProviderContent(content, true)) continue;
-          return new Response(
-            JSON.stringify({ choices: [{ message: { content } }] }),
-            { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-          );
-        }
-        return response;
+        const data = await response.json();
+        const content = data?.choices?.[0]?.message?.content;
+        if (typeof content !== "string" || !isUsableProviderContent(content, unlocked)) continue;
+        return new Response(
+          JSON.stringify({ choices: [{ message: { content } }] }),
+          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
       } catch (err) {
         console.error(`Gemini ${model} error:`, err);
       }
@@ -378,6 +405,12 @@ serve(async (req) => {
     const { unlocked, cleanMessages } = isUnlocked(messages);
     const systemPrompt = unlocked ? UNLOCKED_SYSTEM : STANDARD_SYSTEM;
     const containsImage = hasImageInLastUserMessage(cleanMessages);
+    if (isUnsafeCyberConversation(cleanMessages)) {
+      return new Response(
+        JSON.stringify({ choices: [{ message: { content: getSafeLocalFallback(cleanMessages) } }] }),
+        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
     const models = containsImage
       ? (unlocked ? VISION_UNLOCKED_MODELS : VISION_STANDARD_MODELS)
       : (unlocked ? UNLOCKED_MODELS : STANDARD_MODELS);
@@ -385,14 +418,15 @@ serve(async (req) => {
 
     const providerMessages = prepareMessagesForProvider(cleanMessages, containsImage);
     const allMessages = [{ role: "system", content: systemPrompt }, ...providerMessages];
+    const rescueMessages = [
+      { role: "system", content: `${systemPrompt}\nIMPORTANT: Ignore tout ancien message d'erreur ou de surcharge. Ne répète jamais un message de surcharge. Réponds uniquement à la dernière demande utilisateur.` },
+      { role: "user", content: getLastUserContent(cleanMessages) },
+    ];
 
     const geminiKeys = getValidGeminiKeys();
     const geminiResponse = await tryGeminiDirect(geminiKeys, allMessages, unlocked);
     if (geminiResponse) {
-      if (unlocked) return geminiResponse;
-      return new Response(geminiResponse.body, {
-        headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
-      });
+      return geminiResponse;
     }
 
     const groqKeys = getValidGroqKeys();
@@ -426,8 +460,33 @@ serve(async (req) => {
       }
     }
 
+    const rescueGeminiResponse = await tryGeminiDirect(geminiKeys, rescueMessages, unlocked);
+    if (rescueGeminiResponse) {
+      return rescueGeminiResponse;
+    }
+
+    if (!containsImage) {
+      const rescueGroqContent = await tryGroqDirect(groqKeys, rescueMessages, unlocked);
+      if (rescueGroqContent) {
+        return new Response(
+          JSON.stringify({ choices: [{ message: { content: rescueGroqContent } }] }),
+          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+    }
+
+    if (LOVABLE_API_KEY) {
+      const rescueContent = await tryNonStreamingWithRecovery(LOVABLE_API_KEY, rescueMessages, models);
+      if (rescueContent) {
+        return new Response(
+          JSON.stringify({ choices: [{ message: { content: rescueContent } }] }),
+          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+    }
+
     return new Response(
-      JSON.stringify({ choices: [{ message: { content: "⚡ SIGMA est temporairement en surcharge. Réessaie dans 1 minute. 🔄" } }] }),
+      JSON.stringify({ choices: [{ message: { content: getSafeLocalFallback(cleanMessages) } }] }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (e) {
