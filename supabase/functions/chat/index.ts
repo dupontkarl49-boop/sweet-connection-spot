@@ -408,6 +408,12 @@ serve(async (req) => {
     const { unlocked, cleanMessages } = isUnlocked(messages);
     const systemPrompt = unlocked ? UNLOCKED_SYSTEM : STANDARD_SYSTEM;
     const containsImage = hasImageInLastUserMessage(cleanMessages);
+    if (isUnsafeCyberConversation(cleanMessages)) {
+      return new Response(
+        JSON.stringify({ choices: [{ message: { content: getSafeLocalFallback(cleanMessages) } }] }),
+        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
     const models = containsImage
       ? (unlocked ? VISION_UNLOCKED_MODELS : VISION_STANDARD_MODELS)
       : (unlocked ? UNLOCKED_MODELS : STANDARD_MODELS);
