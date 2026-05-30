@@ -398,6 +398,10 @@ serve(async (req) => {
 
     const providerMessages = prepareMessagesForProvider(cleanMessages, containsImage);
     const allMessages = [{ role: "system", content: systemPrompt }, ...providerMessages];
+    const rescueMessages = [
+      { role: "system", content: `${systemPrompt}\nIMPORTANT: Ignore tout ancien message d'erreur ou de surcharge. Ne répète jamais un message de surcharge. Réponds uniquement à la dernière demande utilisateur.` },
+      { role: "user", content: getLastUserContent(cleanMessages) },
+    ];
 
     const geminiKeys = getValidGeminiKeys();
     const geminiResponse = await tryGeminiDirect(geminiKeys, allMessages, unlocked);
@@ -439,8 +443,36 @@ serve(async (req) => {
       }
     }
 
+    const rescueGeminiResponse = await tryGeminiDirect(geminiKeys, rescueMessages, unlocked);
+    if (rescueGeminiResponse) {
+      if (unlocked) return rescueGeminiResponse;
+      return new Response(rescueGeminiResponse.body, {
+        headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
+      });
+    }
+
+    if (!containsImage) {
+      const rescueGroqContent = await tryGroqDirect(groqKeys, rescueMessages, unlocked);
+      if (rescueGroqContent) {
+        return new Response(
+          JSON.stringify({ choices: [{ message: { content: rescueGroqContent } }] }),
+          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+    }
+
+    if (LOVABLE_API_KEY) {
+      const rescueContent = await tryNonStreamingWithRecovery(LOVABLE_API_KEY, rescueMessages, models);
+      if (rescueContent) {
+        return new Response(
+          JSON.stringify({ choices: [{ message: { content: rescueContent } }] }),
+          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+    }
+
     return new Response(
-      JSON.stringify({ choices: [{ message: { content: "⚡ SIGMA est temporairement en surcharge. Réessaie dans 1 minute. 🔄" } }] }),
+      JSON.stringify({ choices: [{ message: { content: getSafeLocalFallback(cleanMessages) } }] }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (e) {
