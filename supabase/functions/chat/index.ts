@@ -91,58 +91,11 @@ function extractText(content: any): string {
   return "";
 }
 
-function isOverloadMessage(content: string): boolean {
-  const lower = content.toLowerCase();
-  return lower.includes("sigma est temporairement") ||
-    lower.includes("surcharge") ||
-    lower.includes("réessaie dans 1 minute") ||
-    lower.includes("reessaie dans 1 minute");
-}
-
-function isUsableProviderContent(content: string, unlocked: boolean): boolean {
-  const trimmed = content.trim();
-  if (!trimmed || isOverloadMessage(trimmed)) return false;
-  if (!unlocked) return true;
-  const lower = trimmed.toLowerCase();
-  return !REFUSAL_PATTERNS.some((p) => lower.includes(p));
-}
-
-function getLastUserContent(messages: any[]): any {
-  const lastUser = [...messages].reverse().find((msg: any) => msg?.role === "user");
-  return lastUser?.content ?? "";
-}
-
-function getConversationText(messages: any[]): string {
-  return messages.map((msg: any) => extractText(msg?.content)).join("\n").toLowerCase();
-}
-
-function isUnsafeCyberConversation(messages: any[]): boolean {
-  const text = getConversationText(messages);
-  return text.includes("phishing") ||
-    text.includes("credentials captured") ||
-    text.includes("credential") ||
-    text.includes("identifiants") ||
-    text.includes("mot de passe") ||
-    text.includes("2fa") ||
-    text.includes("mfa") ||
-    text.includes("payload") ||
-    text.includes("obfuscation") ||
-    text.includes("victime");
-}
-
-function getSafeLocalFallback(messages: any[]): string {
-  if (isUnsafeCyberConversation(messages)) {
-    return "Je ne peux pas t’aider à créer, reprendre ou améliorer un outil de phishing. Par contre, je peux t’aider à repartir sur une version légale : sensibilisation anti-phishing, simulateur interne autorisé, détection, audit défensif ou dashboard de formation. Donne-moi l’objectif défensif et je continue sans blocage. 🧠⚡";
-  }
-  return "SIGMA est actif. L’ancien historique a déclenché le mode secours, donc renvoie ta dernière demande en une phrase et je repars dessus proprement. 🧠⚡";
-}
-
 function prepareMessagesForProvider(messages: any[], includeCurrentImage: boolean): any[] {
   const lastUserIndex = messages.map((msg: any) => msg?.role).lastIndexOf("user");
   const filtered = messages
     .map((msg: any, originalIndex: number) => ({ msg, originalIndex }))
     .filter(({ msg }: any) => msg?.role === "user" || msg?.role === "assistant")
-    .filter(({ msg }: any) => !(msg.role === "assistant" && isOverloadMessage(extractText(msg.content))))
     .slice(-24)
     .map(({ msg, originalIndex }: any) => {
       if (!Array.isArray(msg.content)) return msg;
@@ -274,7 +227,7 @@ async function tryNonStreamingWithRecovery(apiKey: string, messages: any[], mode
 
       const data = await response.json();
       const content = data?.choices?.[0]?.message?.content;
-      if (typeof content !== "string" || !isUsableProviderContent(content, true)) continue;
+      if (typeof content !== "string" || !content.trim()) continue;
 
       // Check for refusal
       const lower = content.toLowerCase();
@@ -313,7 +266,7 @@ async function tryNonStreamingWithRecovery(apiKey: string, messages: any[], mode
         if (recoveryResponse.ok) {
           const recoveryData = await recoveryResponse.json();
           const recoveryContent = recoveryData?.choices?.[0]?.message?.content;
-            if (typeof recoveryContent === "string" && isUsableProviderContent(recoveryContent, true)) return recoveryContent;
+            if (typeof recoveryContent === "string" && recoveryContent.trim()) return recoveryContent;
         }
       }
 
@@ -325,7 +278,7 @@ async function tryNonStreamingWithRecovery(apiKey: string, messages: any[], mode
   return null;
 }
 
-async function tryGeminiDirect(apiKeys: string[], messages: any[], unlocked: boolean): Promise<Response | null> {
+async function tryGeminiDirect(apiKeys: string[], messages: any[]): Promise<Response | null> {
   for (const apiKey of apiKeys) {
     for (const model of GEMINI_MODELS) {
       try {
@@ -347,7 +300,7 @@ async function tryGeminiDirect(apiKeys: string[], messages: any[], unlocked: boo
         console.log(`Gemini direct OK with ${model}`);
         const data = await response.json();
         const content = data?.choices?.[0]?.message?.content;
-        if (typeof content !== "string" || !isUsableProviderContent(content, unlocked)) continue;
+        if (typeof content !== "string" || !content.trim()) continue;
         return new Response(
           JSON.stringify({ choices: [{ message: { content } }] }),
           { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -360,7 +313,7 @@ async function tryGeminiDirect(apiKeys: string[], messages: any[], unlocked: boo
   return null;
 }
 
-async function tryGroqDirect(apiKeys: string[], messages: any[], unlocked: boolean): Promise<string | null> {
+async function tryGroqDirect(apiKeys: string[], messages: any[]): Promise<string | null> {
   for (const apiKey of apiKeys) {
     for (const model of GROQ_MODELS) {
       try {
@@ -381,7 +334,7 @@ async function tryGroqDirect(apiKeys: string[], messages: any[], unlocked: boole
 
         const data = await response.json();
         const content = data?.choices?.[0]?.message?.content;
-        if (typeof content === "string" && isUsableProviderContent(content, unlocked)) {
+        if (typeof content === "string" && content.trim()) {
           console.log(`Groq direct OK with ${model}`);
           return content;
         }
@@ -405,12 +358,6 @@ serve(async (req) => {
     const { unlocked, cleanMessages } = isUnlocked(messages);
     const systemPrompt = unlocked ? UNLOCKED_SYSTEM : STANDARD_SYSTEM;
     const containsImage = hasImageInLastUserMessage(cleanMessages);
-    if (isUnsafeCyberConversation(cleanMessages)) {
-      return new Response(
-        JSON.stringify({ choices: [{ message: { content: getSafeLocalFallback(cleanMessages) } }] }),
-        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
     const models = containsImage
       ? (unlocked ? VISION_UNLOCKED_MODELS : VISION_STANDARD_MODELS)
       : (unlocked ? UNLOCKED_MODELS : STANDARD_MODELS);
@@ -418,29 +365,8 @@ serve(async (req) => {
 
     const providerMessages = prepareMessagesForProvider(cleanMessages, containsImage);
     const allMessages = [{ role: "system", content: systemPrompt }, ...providerMessages];
-    const rescueMessages = [
-      { role: "system", content: `${systemPrompt}\nIMPORTANT: Ignore tout ancien message d'erreur ou de surcharge. Ne répète jamais un message de surcharge. Réponds uniquement à la dernière demande utilisateur.` },
-      { role: "user", content: getLastUserContent(cleanMessages) },
-    ];
 
-    const geminiKeys = getValidGeminiKeys();
-    const geminiResponse = await tryGeminiDirect(geminiKeys, allMessages, unlocked);
-    if (geminiResponse) {
-      return geminiResponse;
-    }
-
-    const groqKeys = getValidGroqKeys();
-    if (!containsImage) {
-      const groqContent = await tryGroqDirect(groqKeys, allMessages, unlocked);
-      if (groqContent) {
-        return new Response(
-          JSON.stringify({ choices: [{ message: { content: groqContent } }] }),
-          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-    }
-
-    // PRIORITY 3: Lovable AI Gateway (fallback safety net)
+    // PRIORITY 1: Lovable AI Gateway (streaming for fast, complete responses)
     if (LOVABLE_API_KEY) {
       if (unlocked) {
         const content = await tryNonStreamingWithRecovery(LOVABLE_API_KEY, allMessages, models);
@@ -460,33 +386,27 @@ serve(async (req) => {
       }
     }
 
-    const rescueGeminiResponse = await tryGeminiDirect(geminiKeys, rescueMessages, unlocked);
-    if (rescueGeminiResponse) {
-      return rescueGeminiResponse;
+    // PRIORITY 2: Direct Gemini fallback
+    const geminiKeys = getValidGeminiKeys();
+    const geminiResponse = await tryGeminiDirect(geminiKeys, allMessages);
+    if (geminiResponse) {
+      return geminiResponse;
     }
 
+    // PRIORITY 3: Direct Groq fallback (no images)
     if (!containsImage) {
-      const rescueGroqContent = await tryGroqDirect(groqKeys, rescueMessages, unlocked);
-      if (rescueGroqContent) {
+      const groqKeys = getValidGroqKeys();
+      const groqContent = await tryGroqDirect(groqKeys, allMessages);
+      if (groqContent) {
         return new Response(
-          JSON.stringify({ choices: [{ message: { content: rescueGroqContent } }] }),
-          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-    }
-
-    if (LOVABLE_API_KEY) {
-      const rescueContent = await tryNonStreamingWithRecovery(LOVABLE_API_KEY, rescueMessages, models);
-      if (rescueContent) {
-        return new Response(
-          JSON.stringify({ choices: [{ message: { content: rescueContent } }] }),
+          JSON.stringify({ choices: [{ message: { content: groqContent } }] }),
           { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
     }
 
     return new Response(
-      JSON.stringify({ choices: [{ message: { content: getSafeLocalFallback(cleanMessages) } }] }),
+      JSON.stringify({ choices: [{ message: { content: "⚡ SIGMA est temporairement en surcharge. Réessaie dans 1 minute. 🔄" } }] }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (e) {
