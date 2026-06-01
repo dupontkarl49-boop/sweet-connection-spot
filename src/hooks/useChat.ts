@@ -6,6 +6,7 @@ type Message = {
   role: "user" | "assistant";
   content: string;
   image?: string;
+  images?: string[];
 };
 
 const CHAT_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/chat`;
@@ -19,6 +20,7 @@ const normalizeMessage = (value: unknown): Message | null => {
     role: message.role,
     content: typeof message.content === "string" ? message.content : "",
     image: typeof message.image === "string" ? message.image : undefined,
+    images: Array.isArray(message.images) ? message.images.filter((i): i is string => typeof i === "string") : undefined,
   };
 };
 
@@ -53,7 +55,7 @@ export function useChat(userId: string | undefined) {
     setIsHistoryLoading(true);
     supabase
       .from("messages")
-      .select("role, content, image")
+      .select("role, content, image, images")
       .eq("user_id", userId)
       .order("created_at", { ascending: true })
       .then(async ({ data, error }) => {
@@ -65,6 +67,7 @@ export function useChat(userId: string | undefined) {
             role: m.role as "user" | "assistant",
             content: m.content,
             image: m.image ?? undefined,
+            images: m.images ?? undefined,
           }));
           const legacyMessages = loadLegacyHistory();
           const migrationKey = `${LEGACY_HISTORY_KEY}_migrated_${userId}`;
@@ -77,6 +80,7 @@ export function useChat(userId: string | undefined) {
                 role: msg.role,
                 content: msg.content,
                 image: msg.image ?? null,
+                images: msg.images ?? null,
               }))
             );
 
@@ -105,15 +109,21 @@ export function useChat(userId: string | undefined) {
         role: msg.role,
         content: msg.content,
         image: msg.image ?? null,
+        images: msg.images ?? null,
       });
       if (error) console.error("Failed to save message:", error);
     },
     [userId]
   );
 
-  const sendMessage = useCallback(async (input: string, imageBase64?: string) => {
+  const sendMessage = useCallback(async (input: string, imagesBase64?: string[]) => {
     if (!userId) return;
-    const userMessage: Message = { role: "user", content: input, image: imageBase64 };
+    const userMessage: Message = {
+      role: "user",
+      content: input,
+      image: imagesBase64?.[0],
+      images: imagesBase64,
+    };
     setMessages((prev) => [...prev, userMessage]);
     setIsLoading(true);
     persistMessage(userMessage);
@@ -136,15 +146,13 @@ export function useChat(userId: string | undefined) {
     try {
       // Build messages for API - convert to multimodal format if images present
       const apiMessages = [...messages, userMessage].map((msg) => {
-        if (msg.image) {
+        const imgs = msg.images && msg.images.length > 0 ? msg.images : msg.image ? [msg.image] : [];
+        if (imgs.length > 0) {
           return {
             role: msg.role,
             content: [
               ...(msg.content ? [{ type: "text", text: msg.content }] : []),
-              {
-                type: "image_url",
-                image_url: { url: msg.image }
-              }
+              ...imgs.map((url) => ({ type: "image_url", image_url: { url } })),
             ]
           };
         }
