@@ -113,9 +113,14 @@ export function useChat(userId: string | undefined) {
     [userId]
   );
 
-  const sendMessage = useCallback(async (input: string, imageBase64?: string) => {
+  const sendMessage = useCallback(async (input: string, imagesBase64?: string[]) => {
     if (!userId) return;
-    const userMessage: Message = { role: "user", content: input, image: imageBase64 };
+    const userMessage: Message = {
+      role: "user",
+      content: input,
+      image: imagesBase64?.[0],
+      images: imagesBase64,
+    };
     setMessages((prev) => [...prev, userMessage]);
     setIsLoading(true);
     persistMessage(userMessage);
@@ -138,15 +143,13 @@ export function useChat(userId: string | undefined) {
     try {
       // Build messages for API - convert to multimodal format if images present
       const apiMessages = [...messages, userMessage].map((msg) => {
-        if (msg.image) {
+        const imgs = msg.images && msg.images.length > 0 ? msg.images : msg.image ? [msg.image] : [];
+        if (imgs.length > 0) {
           return {
             role: msg.role,
             content: [
               ...(msg.content ? [{ type: "text", text: msg.content }] : []),
-              {
-                type: "image_url",
-                image_url: { url: msg.image }
-              }
+              ...imgs.map((url) => ({ type: "image_url", image_url: { url } })),
             ]
           };
         }
