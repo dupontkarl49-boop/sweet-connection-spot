@@ -107,6 +107,7 @@ export function useChat(userId: string | undefined) {
         role: msg.role,
         content: msg.content,
         image: msg.image ?? null,
+        images: msg.images ?? null,
       });
       if (error) console.error("Failed to save message:", error);
     },
