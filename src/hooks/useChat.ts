@@ -6,6 +6,7 @@ type Message = {
   role: "user" | "assistant";
   content: string;
   image?: string;
+  images?: string[];
 };
 
 const CHAT_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/chat`;
@@ -19,6 +20,7 @@ const normalizeMessage = (value: unknown): Message | null => {
     role: message.role,
     content: typeof message.content === "string" ? message.content : "",
     image: typeof message.image === "string" ? message.image : undefined,
+    images: Array.isArray(message.images) ? message.images.filter((i): i is string => typeof i === "string") : undefined,
   };
 };
 
