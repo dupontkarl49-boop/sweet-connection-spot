@@ -55,7 +55,7 @@ export function useChat(userId: string | undefined) {
     setIsHistoryLoading(true);
     supabase
       .from("messages")
-      .select("role, content, image")
+      .select("role, content, image, images")
       .eq("user_id", userId)
       .order("created_at", { ascending: true })
       .then(async ({ data, error }) => {
@@ -67,6 +67,7 @@ export function useChat(userId: string | undefined) {
             role: m.role as "user" | "assistant",
             content: m.content,
             image: m.image ?? undefined,
+            images: m.images ?? undefined,
           }));
           const legacyMessages = loadLegacyHistory();
           const migrationKey = `${LEGACY_HISTORY_KEY}_migrated_${userId}`;
@@ -79,6 +80,7 @@ export function useChat(userId: string | undefined) {
                 role: msg.role,
                 content: msg.content,
                 image: msg.image ?? null,
+                images: msg.images ?? null,
               }))
             );
 
