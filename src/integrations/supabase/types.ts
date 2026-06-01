@@ -20,6 +20,7 @@ export type Database = {
           created_at: string
           id: string
           image: string | null
+          images: string[] | null
           role: string
           user_id: string
         }
@@ -28,6 +29,7 @@ export type Database = {
           created_at?: string
           id?: string
           image?: string | null
+          images?: string[] | null
           role: string
           user_id: string
         }
@@ -36,6 +38,7 @@ export type Database = {
           created_at?: string
           id?: string
           image?: string | null
+          images?: string[] | null
           role?: string
           user_id?: string
         }
