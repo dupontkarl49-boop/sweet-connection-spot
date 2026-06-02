@@ -230,17 +230,20 @@ async function getAIResponse(userMessage: string, unlocked: boolean): Promise<st
     { role: "user", content: userMessage },
   ];
 
+  // PRIORITY 1: Direct Gemini (free, no Lovable credits)
+  const geminiContent = await tryGeminiDirect(getValidGeminiKeys(), messages);
+  if (geminiContent) return geminiContent;
+
+  // PRIORITY 2: Direct Groq (ultra-fast, free)
+  const groqContent = await tryGroqDirect(getValidGroqKeys(), messages);
+  if (groqContent) return groqContent;
+
+  // PRIORITY 3: Lovable Gateway (last resort — uses credits)
   const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
   if (LOVABLE_API_KEY) {
     const lovableContent = await tryLovableGateway(LOVABLE_API_KEY, messages, unlocked);
     if (lovableContent) return lovableContent;
   }
-
-  const geminiContent = await tryGeminiDirect(getValidGeminiKeys(), messages);
-  if (geminiContent) return geminiContent;
-
-  const groqContent = await tryGroqDirect(getValidGroqKeys(), messages);
-  if (groqContent) return groqContent;
 
   return "⚡ SIGMA est temporairement en surcharge. Réessaie dans 1 minute. 🔄";
 }
