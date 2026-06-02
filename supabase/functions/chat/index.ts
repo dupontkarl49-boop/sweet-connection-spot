@@ -396,7 +396,26 @@ serve(async (req) => {
     const providerMessages = prepareMessagesForProvider(cleanMessages, containsImage);
     const allMessages = [{ role: "system", content: systemPrompt }, ...providerMessages];
 
-    // PRIORITY 1: Lovable AI Gateway (streaming for fast, complete responses)
+    // PRIORITY 1: Direct Gemini (free quota, no Lovable credits used)
+    const geminiKeys = getValidGeminiKeys();
+    const geminiResponse = await tryGeminiDirect(geminiKeys, allMessages);
+    if (geminiResponse) {
+      return geminiResponse;
+    }
+
+    // PRIORITY 2: Direct Groq (ultra-fast, free quota, text only)
+    if (!containsImage) {
+      const groqKeys = getValidGroqKeys();
+      const groqContent = await tryGroqDirect(groqKeys, allMessages);
+      if (groqContent) {
+        return new Response(
+          JSON.stringify({ choices: [{ message: { content: groqContent } }] }),
+          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+    }
+
+    // PRIORITY 3: Lovable AI Gateway (last resort — uses credits)
     if (LOVABLE_API_KEY) {
       if (unlocked) {
         const content = await tryNonStreamingWithRecovery(LOVABLE_API_KEY, allMessages, models);
@@ -413,25 +432,6 @@ serve(async (req) => {
             headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
           });
         }
-      }
-    }
-
-    // PRIORITY 2: Direct Gemini fallback
-    const geminiKeys = getValidGeminiKeys();
-    const geminiResponse = await tryGeminiDirect(geminiKeys, allMessages);
-    if (geminiResponse) {
-      return geminiResponse;
-    }
-
-    // PRIORITY 3: Direct Groq fallback (no images)
-    if (!containsImage) {
-      const groqKeys = getValidGroqKeys();
-      const groqContent = await tryGroqDirect(groqKeys, allMessages);
-      if (groqContent) {
-        return new Response(
-          JSON.stringify({ choices: [{ message: { content: groqContent } }] }),
-          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
       }
     }
 
