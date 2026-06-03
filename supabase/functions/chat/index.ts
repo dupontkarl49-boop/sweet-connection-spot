@@ -386,6 +386,38 @@ serve(async (req) => {
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
 
     const { unlocked, cleanMessages } = isUnlocked(messages);
+
+    // /clone <url> — Holistic Site Cloner shortcut
+    const lastMsg = [...cleanMessages].reverse().find((m: any) => m?.role === "user");
+    const lastText = Array.isArray(lastMsg?.content)
+      ? lastMsg.content.filter((p: any) => p?.type === "text").map((p: any) => p.text).join(" ")
+      : (lastMsg?.content ?? "");
+    const cloneMatch = String(lastText).trim().match(/^\/clone\s+(https?:\/\/\S+)/i);
+    if (cloneMatch) {
+      try {
+        const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
+        const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+        const r = await fetch(`${SUPABASE_URL}/functions/v1/clone-site`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${SERVICE_KEY}` },
+          body: JSON.stringify({ url: cloneMatch[1] }),
+        });
+        const data = await r.json();
+        const content = data?.code
+          ? `🛰️ **Clone de ${data.title || cloneMatch[1]}**\n\n${data.code}`
+          : `❌ Échec du clonage: ${data?.error || "erreur inconnue"}`;
+        return new Response(
+          JSON.stringify({ choices: [{ message: { content } }] }),
+          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      } catch (e) {
+        return new Response(
+          JSON.stringify({ choices: [{ message: { content: `❌ Erreur clone: ${(e as Error).message}` } }] }),
+          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+    }
+
     const systemPrompt = unlocked ? UNLOCKED_SYSTEM : STANDARD_SYSTEM;
     const containsImage = hasImageInLastUserMessage(cleanMessages);
     const models = containsImage

@@ -267,8 +267,37 @@ serve(async (req) => {
 
     if (userText === "/start") {
       await sendTelegramMessage(TELEGRAM_BOT_TOKEN, chatId,
-        "🧠 *Bienvenue sur SIGMA !*\n\nJe suis une IA avancée prête à répondre à toutes tes questions.\n\nEnvoie-moi un message pour commencer. ⚡"
+        "🧠 *Bienvenue sur SIGMA !*\n\nJe suis une IA avancée prête à répondre à toutes tes questions.\n\n💡 *Commandes spéciales :*\n`/clone <url>` — Reproduit fidèlement n'importe quel site web (HTML/CSS/JS)\n\nEnvoie-moi un message pour commencer. ⚡"
       );
+      return new Response("OK", { status: 200 });
+    }
+
+    // /clone <url> — Holistic Site Cloner
+    const cloneMatch = userText.match(/^\/clone\s+(https?:\/\/\S+)/i);
+    if (cloneMatch) {
+      const targetUrl = cloneMatch[1];
+      await sendTelegramMessage(TELEGRAM_BOT_TOKEN, chatId, `🛰️ *SIGMA analyse* \`${targetUrl}\`...\n\n_Extraction styles, DOM, screenshots multi-viewport, synthèse holistique. ~30-60s_ ⚡`);
+      try {
+        const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
+        const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+        const res = await fetch(`${SUPABASE_URL}/functions/v1/clone-site`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${SERVICE_KEY}` },
+          body: JSON.stringify({ url: targetUrl }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data?.code) {
+          await sendTelegramMessage(TELEGRAM_BOT_TOKEN, chatId, `❌ Échec du clonage: ${data?.error || "erreur inconnue"}`);
+        } else {
+          const header = `✅ *Clone de* ${data.title || targetUrl}\n\n`;
+          const chunks = (header + data.code).match(/[\s\S]{1,4000}/g) || [];
+          for (const chunk of chunks) {
+            await sendTelegramMessage(TELEGRAM_BOT_TOKEN, chatId, chunk);
+          }
+        }
+      } catch (e) {
+        await sendTelegramMessage(TELEGRAM_BOT_TOKEN, chatId, `❌ Erreur clone-site: ${(e as Error).message}`);
+      }
       return new Response("OK", { status: 200 });
     }
 
