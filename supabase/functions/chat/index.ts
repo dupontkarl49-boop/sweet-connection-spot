@@ -403,8 +403,12 @@ serve(async (req) => {
           body: JSON.stringify({ url: cloneMatch[1] }),
         });
         const data = await r.json();
-        const content = data?.code
-          ? `🛰️ **Clone de ${data.title || cloneMatch[1]}**\n\n${data.code}`
+        const content = data?.downloadUrl
+          ? `🛰️ **Clone de ${data.title || cloneMatch[1]}**\n\n` +
+            `📦 ${data.assetsCount || 0} assets • ${Math.round((data.zipSize || 0) / 1024)} KB\n` +
+            `⏳ Lien valide 7 jours\n\n` +
+            `📥 [**Télécharger le ZIP complet**](${data.downloadUrl})\n\n` +
+            `_Contenu : sigma-clone.html (page reconstituée), original.html, assets/ (css, js, images, fonts), screenshots/, branding.json_`
           : `❌ Échec du clonage: ${data?.error || "erreur inconnue"}`;
         return new Response(
           JSON.stringify({ choices: [{ message: { content } }] }),

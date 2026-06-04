@@ -289,11 +289,13 @@ serve(async (req) => {
         if (!res.ok || !data?.code) {
           await sendTelegramMessage(TELEGRAM_BOT_TOKEN, chatId, `❌ Échec du clonage: ${data?.error || "erreur inconnue"}`);
         } else {
-          const header = `✅ *Clone de* ${data.title || targetUrl}\n\n`;
-          const chunks = (header + data.code).match(/[\s\S]{1,4000}/g) || [];
-          for (const chunk of chunks) {
-            await sendTelegramMessage(TELEGRAM_BOT_TOKEN, chatId, chunk);
-          }
+          const sizeKb = Math.round((data.zipSize || 0) / 1024);
+          const msg = `✅ *Clone terminé* — ${data.title || targetUrl}\n\n` +
+            `📦 *${data.assetsCount || 0} assets* récupérés • ${sizeKb} KB\n` +
+            `⏳ Lien valide *7 jours*\n\n` +
+            `📥 [Télécharger le ZIP](${data.downloadUrl})\n\n` +
+            `_Contenu : sigma-clone.html + original.html + assets/ + screenshots/ + branding.json_`;
+          await sendTelegramMessage(TELEGRAM_BOT_TOKEN, chatId, msg);
         }
       } catch (e) {
         await sendTelegramMessage(TELEGRAM_BOT_TOKEN, chatId, `❌ Erreur clone-site: ${(e as Error).message}`);
