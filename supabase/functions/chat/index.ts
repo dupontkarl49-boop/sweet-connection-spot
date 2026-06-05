@@ -531,13 +531,37 @@ serve(async (req) => {
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
 
     const { unlocked, cleanMessages } = isUnlocked(messages);
+    const userId = getUserIdFromAuth(req);
 
     // /clone <url> — Holistic Site Cloner shortcut
     const lastMsg = [...cleanMessages].reverse().find((m: any) => m?.role === "user");
     const lastText = Array.isArray(lastMsg?.content)
       ? lastMsg.content.filter((p: any) => p?.type === "text").map((p: any) => p.text).join(" ")
       : (lastMsg?.content ?? "");
-    const cloneMatch = String(lastText).trim().match(/^\/clone\s+(https?:\/\/\S+)/i);
+    const text = String(lastText).trim();
+
+    // ===== Slash commands =====
+    if (text === "/help" || text === "/aide") {
+      return reply(`⚡ **Commandes SIGMA**\n\n• \`/web <requête>\` — recherche web\n• \`/scrape <url>\` — extraire le contenu d'une page\n• \`/run <code>\` — exécuter du JS (sandbox 5s)\n• \`/img <prompt>\` — générer une image\n• \`/remember <clé>: <valeur>\` — mémoriser\n• \`/remember list\` — voir la mémoire\n• \`/remember forget <clé>\` — oublier\n• \`/clone <url>\` — cloner un site (ZIP)\n• \`/help\` — cette aide`);
+    }
+    const webMatch = text.match(/^\/web\s+(.+)/is);
+    if (webMatch) return reply(await capWebSearch(webMatch[1]));
+    const scrapeMatch = text.match(/^\/scrape\s+(https?:\/\/\S+)/i);
+    if (scrapeMatch) return reply(await capScrape(scrapeMatch[1]));
+    const runMatch = text.match(/^\/run\s+([\s\S]+)/i);
+    if (runMatch) {
+      const code = runMatch[1].replace(/^```(?:js|javascript|ts)?\n?|```$/g, "").trim();
+      return reply(await capRunJs(code));
+    }
+    const imgMatch = text.match(/^\/img\s+(.+)/is);
+    if (imgMatch) return reply(await capGenImage(imgMatch[1]));
+    const memMatch = text.match(/^\/remember(?:\s+([\s\S]+))?$/i);
+    if (memMatch) {
+      if (!userId) return reply("🔒 Connecte-toi pour utiliser la mémoire persistante.");
+      return reply(await capMemory(userId, memMatch[1] || ""));
+    }
+
+    const cloneMatch = text.match(/^\/clone\s+(https?:\/\/\S+)/i);
     if (cloneMatch) {
       try {
         const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
@@ -568,6 +592,7 @@ serve(async (req) => {
     }
 
     const systemPrompt = unlocked ? UNLOCKED_SYSTEM : STANDARD_SYSTEM;
+    const memoryBlock = await fetchUserMemory(userId);
     const containsImage = hasImageInLastUserMessage(cleanMessages);
     const models = containsImage
       ? (unlocked ? VISION_UNLOCKED_MODELS : VISION_STANDARD_MODELS)
@@ -575,7 +600,7 @@ serve(async (req) => {
     console.log(`Mode: unlocked=${unlocked}, image=${containsImage}, models=${models.join(",")}`);
 
     const providerMessages = prepareMessagesForProvider(cleanMessages, containsImage);
-    const allMessages = [{ role: "system", content: systemPrompt }, ...providerMessages];
+    const allMessages = [{ role: "system", content: systemPrompt + memoryBlock }, ...providerMessages];
 
     // PRIORITY 1: Direct Gemini (free quota, no Lovable credits used)
     const geminiKeys = getValidGeminiKeys();
