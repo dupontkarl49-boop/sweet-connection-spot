@@ -5,6 +5,151 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
+// ===== Réponse helper =====
+const reply = (content: string) => new Response(
+  JSON.stringify({ choices: [{ message: { content } }] }),
+  { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+);
+
+// ===== Auth helper: extract user_id from JWT =====
+function getUserIdFromAuth(req: Request): string | null {
+  try {
+    const auth = req.headers.get("authorization") || "";
+    const token = auth.replace(/^Bearer\s+/i, "");
+    if (!token) return null;
+    const payload = JSON.parse(atob(token.split(".")[1]));
+    return payload?.sub || null;
+  } catch { return null; }
+}
+
+// ===== Capability: Web search (Firecrawl) =====
+async function capWebSearch(query: string): Promise<string> {
+  const key = Deno.env.get("FIRECRAWL_API_KEY");
+  if (!key) return "❌ Firecrawl non configuré.";
+  const r = await fetch("https://api.firecrawl.dev/v2/search", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ query, limit: 5 }),
+  });
+  const data = await r.json().catch(() => null);
+  if (!r.ok) return `❌ Recherche échouée (${r.status}).`;
+  const results = data?.data?.web || data?.web?.results || data?.data || [];
+  if (!Array.isArray(results) || results.length === 0) return "🔍 Aucun résultat.";
+  const lines = results.slice(0, 5).map((res: any, i: number) =>
+    `${i + 1}. **[${res.title || res.url}](${res.url})**\n   ${res.description || res.snippet || ""}`
+  );
+  return `🌐 **Résultats pour "${query}"**\n\n${lines.join("\n\n")}`;
+}
+
+// ===== Capability: Scrape URL (Firecrawl) =====
+async function capScrape(url: string): Promise<string> {
+  const key = Deno.env.get("FIRECRAWL_API_KEY");
+  if (!key) return "❌ Firecrawl non configuré.";
+  const r = await fetch("https://api.firecrawl.dev/v2/scrape", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ url, formats: ["markdown", "summary"], onlyMainContent: true }),
+  });
+  const data = await r.json().catch(() => null);
+  if (!r.ok) return `❌ Scrape échoué (${r.status}).`;
+  const doc = data?.data || data;
+  const md = (doc?.markdown || "").slice(0, 4000);
+  const sum = doc?.summary || "";
+  const title = doc?.metadata?.title || url;
+  return `📄 **${title}**\n\n${sum ? `**Résumé:** ${sum}\n\n` : ""}---\n\n${md}${md.length >= 4000 ? "\n\n_(tronqué)_" : ""}`;
+}
+
+// ===== Capability: Sandbox JS execution =====
+async function capRunJs(code: string): Promise<string> {
+  try {
+    const worker = new Worker(
+      URL.createObjectURL(new Blob(
+        [`onmessage=async e=>{try{const r=await(async()=>{${e.data}})();postMessage({ok:true,r:typeof r==='string'?r:JSON.stringify(r,null,2)})}catch(err){postMessage({ok:false,r:String(err)})}}`],
+        { type: "application/javascript" }
+      )),
+      { type: "module", deno: { permissions: "none" } } as any,
+    );
+    const result: any = await new Promise((resolve) => {
+      const t = setTimeout(() => { worker.terminate(); resolve({ ok: false, r: "⏱️ Timeout (5s)" }); }, 5000);
+      worker.onmessage = (ev) => { clearTimeout(t); worker.terminate(); resolve(ev.data); };
+      worker.onerror = (ev) => { clearTimeout(t); worker.terminate(); resolve({ ok: false, r: ev.message }); };
+      worker.postMessage(code);
+    });
+    return result.ok
+      ? `⚡ **Résultat**\n\`\`\`json\n${result.r}\n\`\`\``
+      : `❌ **Erreur**\n\`\`\`\n${result.r}\n\`\`\``;
+  } catch (e) {
+    return `❌ Sandbox indisponible: ${(e as Error).message}`;
+  }
+}
+
+// ===== Capability: Image generation =====
+async function capGenImage(prompt: string): Promise<string> {
+  const key = Deno.env.get("LOVABLE_API_KEY");
+  if (!key) return "❌ Génération d'image indisponible.";
+  const r = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+    method: "POST",
+    headers: { "Lovable-API-Key": key, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: "google/gemini-2.5-flash-image",
+      messages: [{ role: "user", content: prompt }],
+      modalities: ["image", "text"],
+    }),
+  });
+  if (!r.ok) return `❌ Génération échouée (${r.status}).`;
+  const data = await r.json();
+  const img = data?.choices?.[0]?.message?.images?.[0]?.image_url?.url
+    || data?.choices?.[0]?.message?.content?.match?.(/data:image[^\s)"']+/)?.[0];
+  if (!img) return "❌ Aucune image générée.";
+  return `🎨 **Image générée**\n\n![${prompt}](${img})`;
+}
+
+// ===== Capability: Persistent memory =====
+async function capMemory(userId: string, command: string): Promise<string> {
+  const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
+  const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  if (!SUPABASE_URL || !SERVICE_KEY) return "❌ Stockage indisponible.";
+  const headers = { apikey: SERVICE_KEY, Authorization: `Bearer ${SERVICE_KEY}`, "Content-Type": "application/json" };
+  const base = `${SUPABASE_URL}/rest/v1/user_memory`;
+
+  const trimmed = command.trim();
+  if (!trimmed || trimmed === "list") {
+    const r = await fetch(`${base}?user_id=eq.${userId}&select=key,value,updated_at&order=updated_at.desc`, { headers });
+    const rows = await r.json();
+    if (!Array.isArray(rows) || rows.length === 0) return "🧠 Aucun souvenir. Utilise `/remember <clé>: <valeur>` pour en ajouter.";
+    return `🧠 **Mémoire (${rows.length})**\n\n${rows.map((m: any) => `• **${m.key}**: ${m.value}`).join("\n")}`;
+  }
+  if (trimmed.startsWith("forget ")) {
+    const key = trimmed.slice(7).trim();
+    await fetch(`${base}?user_id=eq.${userId}&key=eq.${encodeURIComponent(key)}`, { method: "DELETE", headers });
+    return `🗑️ Oublié: **${key}**`;
+  }
+  const m = trimmed.match(/^([^:]+):\s*(.+)$/s);
+  if (!m) return "❓ Format: `/remember clé: valeur`, `/remember list`, ou `/remember forget <clé>`";
+  const [, key, value] = m;
+  await fetch(base, {
+    method: "POST",
+    headers: { ...headers, Prefer: "resolution=merge-duplicates,return=minimal" },
+    body: JSON.stringify({ user_id: userId, key: key.trim(), value: value.trim(), updated_at: new Date().toISOString() }),
+  });
+  return `🧠 Mémorisé: **${key.trim()}** → ${value.trim()}`;
+}
+
+async function fetchUserMemory(userId: string | null): Promise<string> {
+  if (!userId) return "";
+  try {
+    const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
+    const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    if (!SUPABASE_URL || !SERVICE_KEY) return "";
+    const r = await fetch(`${SUPABASE_URL}/rest/v1/user_memory?user_id=eq.${userId}&select=key,value&limit=50`, {
+      headers: { apikey: SERVICE_KEY, Authorization: `Bearer ${SERVICE_KEY}` },
+    });
+    const rows = await r.json();
+    if (!Array.isArray(rows) || rows.length === 0) return "";
+    return `\n\nMÉMOIRE DE L'UTILISATEUR (à utiliser quand pertinent):\n${rows.map((m: any) => `- ${m.key}: ${m.value}`).join("\n")}`;
+  } catch { return ""; }
+}
+
 const SECRET_KEY = "Sigma -1-x orc0p/∆{}";
 const SECRET_KEY_ALT = "Sigma -1-x orc0p/Δ{}";
 
