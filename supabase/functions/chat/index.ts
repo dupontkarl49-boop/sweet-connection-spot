@@ -280,7 +280,8 @@ async function toolRunPython(args: { code: string; download_path?: string }): Pr
   if (!E2B_KEY) return "❌ E2B non configuré.";
   console.log(`E2B key len=${E2B_KEY.length} prefix=${E2B_KEY.slice(0,6)}`);
   try {
-    const { Sandbox } = await import("npm:@e2b/code-interpreter@2");
+    const mod: any = await import("https://esm.sh/@e2b/code-interpreter@2?target=deno");
+    const Sandbox = mod.Sandbox;
     const sbx = await Sandbox.create({ apiKey: E2B_KEY, timeoutMs: 60_000 });
     try {
       const exec = await sbx.runCode(args.code, { timeoutMs: 45_000 });
