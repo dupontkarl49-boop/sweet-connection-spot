@@ -153,6 +153,305 @@ async function fetchUserMemory(userId: string | null): Promise<string> {
 const SECRET_KEY = "Sigma -1-x orc0p/∆{}";
 const SECRET_KEY_ALT = "Sigma -1-x orc0p/Δ{}";
 
+// ============================================================
+// AUTONOMOUS AGENT — Tool-calling loop (max 20 steps)
+// ============================================================
+
+const AGENT_TOOLS = [
+  {
+    type: "function",
+    function: {
+      name: "web_search",
+      description: "Recherche sur le web en temps réel via Firecrawl. Utilise-le pour toute info récente, factuelle, ou que tu ne connais pas avec certitude.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "La requête de recherche" },
+          limit: { type: "number", description: "Nombre de résultats (1-10)", default: 5 },
+        },
+        required: ["query"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "scrape_url",
+      description: "Extrait le contenu (markdown + résumé) d'une page web précise.",
+      parameters: {
+        type: "object",
+        properties: { url: { type: "string", description: "URL complète (http/https)" } },
+        required: ["url"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "crawl_site",
+      description: "Crawle plusieurs pages d'un site (jusqu'à `limit` pages) et retourne leur contenu markdown.",
+      parameters: {
+        type: "object",
+        properties: {
+          url: { type: "string" },
+          limit: { type: "number", default: 10, description: "Max pages (1-25)" },
+        },
+        required: ["url"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "run_js",
+      description: "Exécute du JavaScript dans une sandbox Deno isolée (5s, pas de réseau, pas de FS). Pour calculs rapides, regex, transformations JSON.",
+      parameters: {
+        type: "object",
+        properties: { code: { type: "string", description: "Code JS, doit `return` la valeur finale" } },
+        required: ["code"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "run_python",
+      description: "Exécute du Python dans une sandbox E2B persistante avec accès au filesystem (lecture/écriture/ZIP), pip, requests, pandas, etc. Idéal pour scripts complexes, manipulation de fichiers, génération d'archives ZIP.",
+      parameters: {
+        type: "object",
+        properties: {
+          code: { type: "string", description: "Code Python complet" },
+          download_path: { type: "string", description: "Chemin d'un fichier produit à uploader pour téléchargement (ex: /tmp/out.zip)" },
+        },
+        required: ["code"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "generate_image",
+      description: "Génère une image à partir d'un prompt textuel (Gemini 2.5 Flash Image).",
+      parameters: {
+        type: "object",
+        properties: { prompt: { type: "string" } },
+        required: ["prompt"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "remember",
+      description: "Mémoire long-terme par utilisateur. action='save' (key+value), 'list' (tout lister), 'forget' (key).",
+      parameters: {
+        type: "object",
+        properties: {
+          action: { type: "string", enum: ["save", "list", "forget"] },
+          key: { type: "string" },
+          value: { type: "string" },
+        },
+        required: ["action"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "http_request",
+      description: "Requête HTTP GET/POST vers une API externe publique. Bloque les domaines internes.",
+      parameters: {
+        type: "object",
+        properties: {
+          url: { type: "string" },
+          method: { type: "string", enum: ["GET", "POST", "PUT", "DELETE", "PATCH"], default: "GET" },
+          headers: { type: "object" },
+          body: { type: "string", description: "Corps brut (string ou JSON stringifié)" },
+        },
+        required: ["url"],
+      },
+    },
+  },
+];
+
+// ===== E2B sandbox: Python with FS + ZIP =====
+async function toolRunPython(args: { code: string; download_path?: string }): Promise<string> {
+  const E2B_KEY = Deno.env.get("E2B_API_KEY");
+  if (!E2B_KEY) return "❌ E2B non configuré.";
+  try {
+    // Use E2B Code Interpreter SDK via npm:
+    const { Sandbox } = await import("npm:@e2b/code-interpreter@^1.0.0");
+    const sbx = await Sandbox.create({ apiKey: E2B_KEY, timeoutMs: 60_000 });
+    try {
+      const exec = await sbx.runCode(args.code, { timeoutMs: 45_000 });
+      let out = "";
+      if (exec.logs?.stdout?.length) out += `STDOUT:\n${exec.logs.stdout.join("")}\n`;
+      if (exec.logs?.stderr?.length) out += `STDERR:\n${exec.logs.stderr.join("")}\n`;
+      if (exec.text) out += `RESULT:\n${exec.text}\n`;
+      if (exec.error) out += `ERROR:\n${exec.error.name}: ${exec.error.value}\n${exec.error.traceback || ""}\n`;
+
+      // Upload requested file to Supabase storage and return signed URL
+      if (args.download_path) {
+        try {
+          const bytes = await sbx.files.read(args.download_path, { format: "bytes" });
+          const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+          const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+          const name = args.download_path.split("/").pop() || "file.bin";
+          const objectPath = `agent/${Date.now()}-${crypto.randomUUID().slice(0,8)}-${name}`;
+          const up = await fetch(`${SUPABASE_URL}/storage/v1/object/clones/${objectPath}`, {
+            method: "POST",
+            headers: { apikey: SERVICE_KEY, Authorization: `Bearer ${SERVICE_KEY}`, "Content-Type": "application/octet-stream", "x-upsert": "true" },
+            body: bytes,
+          });
+          if (up.ok) {
+            const sign = await fetch(`${SUPABASE_URL}/storage/v1/object/sign/clones/${objectPath}`, {
+              method: "POST",
+              headers: { apikey: SERVICE_KEY, Authorization: `Bearer ${SERVICE_KEY}`, "Content-Type": "application/json" },
+              body: JSON.stringify({ expiresIn: 60 * 60 * 24 * 7 }),
+            });
+            const s = await sign.json().catch(() => null);
+            if (s?.signedURL) {
+              out += `\nDOWNLOAD_URL: ${SUPABASE_URL}/storage/v1${s.signedURL}\n`;
+            }
+          } else {
+            out += `\n(upload failed ${up.status})\n`;
+          }
+        } catch (e) {
+          out += `\n(download_path read failed: ${(e as Error).message})\n`;
+        }
+      }
+      return out.slice(0, 8000) || "(no output)";
+    } finally {
+      await sbx.kill().catch(() => {});
+    }
+  } catch (e) {
+    return `❌ E2B error: ${(e as Error).message}`;
+  }
+}
+
+async function toolCrawl(args: { url: string; limit?: number }): Promise<string> {
+  const key = Deno.env.get("FIRECRAWL_API_KEY");
+  if (!key) return "❌ Firecrawl non configuré.";
+  const limit = Math.min(Math.max(args.limit ?? 10, 1), 25);
+  const start = await fetch("https://api.firecrawl.dev/v2/crawl", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ url: args.url, limit, scrapeOptions: { formats: ["markdown"] } }),
+  });
+  const job = await start.json().catch(() => null);
+  if (!start.ok || !job?.id) return `❌ Crawl init failed (${start.status})`;
+  // Poll up to 45s
+  for (let i = 0; i < 30; i++) {
+    await new Promise((r) => setTimeout(r, 1500));
+    const s = await fetch(`https://api.firecrawl.dev/v2/crawl/${job.id}`, {
+      headers: { Authorization: `Bearer ${key}` },
+    });
+    const sd = await s.json().catch(() => null);
+    if (sd?.status === "completed") {
+      const pages = (sd.data || []).slice(0, limit).map((p: any) =>
+        `### ${p?.metadata?.sourceURL || p?.metadata?.url || "?"}\n${(p?.markdown || "").slice(0, 1500)}`
+      );
+      return pages.join("\n\n---\n\n").slice(0, 8000);
+    }
+    if (sd?.status === "failed") return `❌ Crawl failed`;
+  }
+  return "⏱️ Crawl timeout (45s)";
+}
+
+async function toolHttp(args: any): Promise<string> {
+  try {
+    const url = new URL(args.url);
+    const host = url.hostname.toLowerCase();
+    const blocked = ["localhost", "127.", "169.254.", "metadata.", "supabase.co", "0.0.0.0", "::1"];
+    if (blocked.some((b) => host === b || host.startsWith(b) || host.includes(b))) {
+      return `❌ Domaine bloqué: ${host}`;
+    }
+    const r = await fetch(args.url, {
+      method: args.method || "GET",
+      headers: args.headers || {},
+      body: args.body,
+    });
+    const ct = r.headers.get("content-type") || "";
+    const text = (await r.text()).slice(0, 6000);
+    return `HTTP ${r.status} (${ct})\n\n${text}`;
+  } catch (e) {
+    return `❌ HTTP error: ${(e as Error).message}`;
+  }
+}
+
+async function executeTool(name: string, args: any, userId: string | null): Promise<string> {
+  try {
+    switch (name) {
+      case "web_search": return await capWebSearch(args.query);
+      case "scrape_url": return await capScrape(args.url);
+      case "crawl_site": return await toolCrawl(args);
+      case "run_js": return await capRunJs(args.code);
+      case "run_python": return await toolRunPython(args);
+      case "generate_image": return await capGenImage(args.prompt);
+      case "remember": {
+        if (!userId) return "❌ Mémoire indisponible (non connecté).";
+        if (args.action === "list") return await capMemory(userId, "list");
+        if (args.action === "forget") return await capMemory(userId, `forget ${args.key}`);
+        if (args.action === "save") return await capMemory(userId, `${args.key}: ${args.value}`);
+        return "❌ action invalide";
+      }
+      case "http_request": return await toolHttp(args);
+      default: return `❌ outil inconnu: ${name}`;
+    }
+  } catch (e) {
+    return `❌ exec error: ${(e as Error).message}`;
+  }
+}
+
+async function runAgentLoop(
+  apiKey: string,
+  systemPrompt: string,
+  userMessages: any[],
+  userId: string | null,
+  model: string,
+): Promise<string | null> {
+  const convo: any[] = [
+    { role: "system", content: systemPrompt + "\n\nTu as accès à des OUTILS autonomes (web_search, scrape_url, crawl_site, run_js, run_python avec FS+ZIP, generate_image, remember, http_request). Invoque-les TOI-MÊME dès qu'utile, en parallèle si possible. Pour livrer un fichier (ZIP, CSV, image générée par script), utilise run_python avec download_path — la réponse inclura un DOWNLOAD_URL à transmettre tel quel à l'utilisateur en markdown [Télécharger](url). Ne demande JAMAIS la permission, agis." },
+    ...userMessages,
+  ];
+
+  for (let step = 0; step < 20; step++) {
+    const resp = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      method: "POST",
+      headers: { "Lovable-API-Key": apiKey, "Content-Type": "application/json" },
+      body: JSON.stringify({ model, messages: convo, tools: AGENT_TOOLS, tool_choice: "auto" }),
+    });
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => "");
+      console.log(`Agent step ${step} model error ${resp.status}: ${errText.slice(0, 200)}`);
+      return null;
+    }
+    const data = await resp.json();
+    const msg = data?.choices?.[0]?.message;
+    if (!msg) return null;
+    const toolCalls = msg.tool_calls || [];
+    if (toolCalls.length === 0) {
+      return typeof msg.content === "string" ? msg.content : null;
+    }
+    convo.push({ role: "assistant", content: msg.content ?? "", tool_calls: toolCalls });
+    const results = await Promise.all(
+      toolCalls.map(async (tc: any) => {
+        let args: any = {};
+        try { args = JSON.parse(tc.function?.arguments || "{}"); } catch {}
+        console.log(`Agent step ${step}: ${tc.function?.name}(${JSON.stringify(args).slice(0,100)})`);
+        const out = await executeTool(tc.function?.name, args, userId);
+        return { id: tc.id, name: tc.function?.name, out };
+      })
+    );
+    for (const r of results) {
+      convo.push({ role: "tool", tool_call_id: r.id, name: r.name, content: r.out.slice(0, 12000) });
+    }
+  }
+  return "⚠️ Limite de 20 étapes atteinte sans réponse finale. Reformule ou simplifie ta demande.";
+}
+
+const AGENT_MODELS = ["google/gemini-2.5-flash", "openai/gpt-5-mini", "google/gemini-2.5-pro"];
+
 const STANDARD_MODELS = [
   "google/gemini-2.5-flash",
   "google/gemini-2.5-flash-lite",
