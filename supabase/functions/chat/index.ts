@@ -302,7 +302,6 @@ const AGENT_TOOLS = [
 ];
 
 // ===== E2B sandbox: Python with FS + ZIP =====
-async function toolRunPython(args: { code: string; download_path?: string }): Promise<string> {
 async function toolRunPython(_args: any): Promise<string> {
   return "❌ run_python est indisponible dans cet environnement (incompatibilité Deno/E2B). Utilise `run_js` pour du calcul, ou `make_zip` pour produire des fichiers téléchargeables.";
 }
