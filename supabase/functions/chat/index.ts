@@ -216,7 +216,7 @@ const AGENT_TOOLS = [
     type: "function",
     function: {
       name: "run_python",
-      description: "Exécute du Python dans une sandbox E2B persistante avec accès au filesystem (lecture/écriture/ZIP), pip, requests, pandas, etc. Idéal pour scripts complexes, manipulation de fichiers, génération d'archives ZIP.",
+      description: "[INDISPONIBLE pour le moment — utilise run_js ou make_zip à la place] Exécution Python sandboxée.",
       parameters: {
         type: "object",
         properties: {
@@ -224,6 +224,33 @@ const AGENT_TOOLS = [
           download_path: { type: "string", description: "Chemin d'un fichier produit à uploader pour téléchargement (ex: /tmp/out.zip)" },
         },
         required: ["code"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "make_zip",
+      description: "Crée une archive ZIP à partir d'une liste de fichiers (texte ou base64) et retourne un lien de téléchargement valide 7 jours. Idéal pour livrer du code, des assets, des exports.",
+      parameters: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "Nom du ZIP (ex: 'projet.zip')" },
+          files: {
+            type: "array",
+            description: "Liste de fichiers à inclure",
+            items: {
+              type: "object",
+              properties: {
+                path: { type: "string", description: "Chemin relatif dans le ZIP (ex: 'src/index.html')" },
+                content: { type: "string", description: "Contenu texte du fichier" },
+                base64: { type: "string", description: "OU contenu binaire en base64 (sans préfixe data:)" },
+              },
+              required: ["path"],
+            },
+          },
+        },
+        required: ["name", "files"],
       },
     },
   },
@@ -276,57 +303,53 @@ const AGENT_TOOLS = [
 
 // ===== E2B sandbox: Python with FS + ZIP =====
 async function toolRunPython(args: { code: string; download_path?: string }): Promise<string> {
-  const E2B_KEY = (Deno.env.get("E2B_API_KEY") || "").trim().replace(/^["']|["']$/g, "");
-  if (!E2B_KEY) return "❌ E2B non configuré.";
-  console.log(`E2B key len=${E2B_KEY.length} prefix=${E2B_KEY.slice(0,6)}`);
-  try {
-    const mod: any = await import("https://esm.sh/@e2b/code-interpreter@2?target=deno");
-    const Sandbox = mod.Sandbox;
-    const sbx = await Sandbox.create({ apiKey: E2B_KEY, timeoutMs: 60_000 });
-    try {
-      const exec = await sbx.runCode(args.code, { timeoutMs: 45_000 });
-      let out = "";
-      if (exec.logs?.stdout?.length) out += `STDOUT:\n${exec.logs.stdout.join("")}\n`;
-      if (exec.logs?.stderr?.length) out += `STDERR:\n${exec.logs.stderr.join("")}\n`;
-      if (exec.text) out += `RESULT:\n${exec.text}\n`;
-      if (exec.error) out += `ERROR:\n${exec.error.name}: ${exec.error.value}\n${exec.error.traceback || ""}\n`;
+async function toolRunPython(_args: any): Promise<string> {
+  return "❌ run_python est indisponible dans cet environnement (incompatibilité Deno/E2B). Utilise `run_js` pour du calcul, ou `make_zip` pour produire des fichiers téléchargeables.";
+}
 
-      // Upload requested file to Supabase storage and return signed URL
-      if (args.download_path) {
-        try {
-          const bytes = await sbx.files.read(args.download_path, { format: "bytes" });
-          const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
-          const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-          const name = args.download_path.split("/").pop() || "file.bin";
-          const objectPath = `agent/${Date.now()}-${crypto.randomUUID().slice(0,8)}-${name}`;
-          const up = await fetch(`${SUPABASE_URL}/storage/v1/object/clones/${objectPath}`, {
-            method: "POST",
-            headers: { apikey: SERVICE_KEY, Authorization: `Bearer ${SERVICE_KEY}`, "Content-Type": "application/octet-stream", "x-upsert": "true" },
-            body: bytes,
-          });
-          if (up.ok) {
-            const sign = await fetch(`${SUPABASE_URL}/storage/v1/object/sign/clones/${objectPath}`, {
-              method: "POST",
-              headers: { apikey: SERVICE_KEY, Authorization: `Bearer ${SERVICE_KEY}`, "Content-Type": "application/json" },
-              body: JSON.stringify({ expiresIn: 60 * 60 * 24 * 7 }),
-            });
-            const s = await sign.json().catch(() => null);
-            if (s?.signedURL) {
-              out += `\nDOWNLOAD_URL: ${SUPABASE_URL}/storage/v1${s.signedURL}\n`;
-            }
-          } else {
-            out += `\n(upload failed ${up.status})\n`;
-          }
-        } catch (e) {
-          out += `\n(download_path read failed: ${(e as Error).message})\n`;
-        }
+async function uploadAndSign(bytes: Uint8Array, filename: string): Promise<string | null> {
+  const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+  const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  const objectPath = `agent/${Date.now()}-${crypto.randomUUID().slice(0,8)}-${filename}`;
+  const up = await fetch(`${SUPABASE_URL}/storage/v1/object/clones/${objectPath}`, {
+    method: "POST",
+    headers: { apikey: SERVICE_KEY, Authorization: `Bearer ${SERVICE_KEY}`, "Content-Type": "application/octet-stream", "x-upsert": "true" },
+    body: bytes,
+  });
+  if (!up.ok) {
+    console.log("upload failed", up.status, await up.text().catch(() => ""));
+    return null;
+  }
+  const sign = await fetch(`${SUPABASE_URL}/storage/v1/object/sign/clones/${objectPath}`, {
+    method: "POST",
+    headers: { apikey: SERVICE_KEY, Authorization: `Bearer ${SERVICE_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ expiresIn: 60 * 60 * 24 * 7 }),
+  });
+  const s = await sign.json().catch(() => null);
+  if (!s?.signedURL) return null;
+  return `${SUPABASE_URL}/storage/v1${s.signedURL}`;
+}
+
+async function toolMakeZip(args: { name: string; files: Array<{ path: string; content?: string; base64?: string }> }): Promise<string> {
+  try {
+    const JSZipMod: any = await import("https://esm.sh/jszip@3.10.1");
+    const JSZip = JSZipMod.default || JSZipMod;
+    const zip = new JSZip();
+    for (const f of args.files || []) {
+      if (!f.path) continue;
+      if (typeof f.base64 === "string" && f.base64.length > 0) {
+        zip.file(f.path, f.base64, { base64: true });
+      } else {
+        zip.file(f.path, f.content ?? "");
       }
-      return out.slice(0, 8000) || "(no output)";
-    } finally {
-      await sbx.kill().catch(() => {});
     }
+    const bytes: Uint8Array = await zip.generateAsync({ type: "uint8array", compression: "DEFLATE" });
+    const filename = args.name.endsWith(".zip") ? args.name : `${args.name}.zip`;
+    const url = await uploadAndSign(bytes, filename);
+    if (!url) return "❌ Upload du ZIP échoué.";
+    return `✅ ZIP créé (${(args.files || []).length} fichiers, ${Math.round(bytes.length / 1024)} KB).\nDOWNLOAD_URL: ${url}\nValide 7 jours.`;
   } catch (e) {
-    return `❌ E2B error: ${(e as Error).message}`;
+    return `❌ make_zip error: ${(e as Error).message}`;
   }
 }
 
@@ -388,6 +411,7 @@ async function executeTool(name: string, args: any, userId: string | null): Prom
       case "crawl_site": return await toolCrawl(args);
       case "run_js": return await capRunJs(args.code);
       case "run_python": return await toolRunPython(args);
+      case "make_zip": return await toolMakeZip(args);
       case "generate_image": return await capGenImage(args.prompt);
       case "remember": {
         if (!userId) return "❌ Mémoire indisponible (non connecté).";
