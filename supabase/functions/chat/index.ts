@@ -153,6 +153,329 @@ async function fetchUserMemory(userId: string | null): Promise<string> {
 const SECRET_KEY = "Sigma -1-x orc0p/∆{}";
 const SECRET_KEY_ALT = "Sigma -1-x orc0p/Δ{}";
 
+// ============================================================
+// AUTONOMOUS AGENT — Tool-calling loop (max 20 steps)
+// ============================================================
+
+const AGENT_TOOLS = [
+  {
+    type: "function",
+    function: {
+      name: "web_search",
+      description: "Recherche sur le web en temps réel via Firecrawl. Utilise-le pour toute info récente, factuelle, ou que tu ne connais pas avec certitude.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "La requête de recherche" },
+          limit: { type: "number", description: "Nombre de résultats (1-10)", default: 5 },
+        },
+        required: ["query"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "scrape_url",
+      description: "Extrait le contenu (markdown + résumé) d'une page web précise.",
+      parameters: {
+        type: "object",
+        properties: { url: { type: "string", description: "URL complète (http/https)" } },
+        required: ["url"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "crawl_site",
+      description: "Crawle plusieurs pages d'un site (jusqu'à `limit` pages) et retourne leur contenu markdown.",
+      parameters: {
+        type: "object",
+        properties: {
+          url: { type: "string" },
+          limit: { type: "number", default: 10, description: "Max pages (1-25)" },
+        },
+        required: ["url"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "run_js",
+      description: "Exécute du JavaScript dans une sandbox Deno isolée (5s, pas de réseau, pas de FS). Pour calculs rapides, regex, transformations JSON.",
+      parameters: {
+        type: "object",
+        properties: { code: { type: "string", description: "Code JS, doit `return` la valeur finale" } },
+        required: ["code"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "run_python",
+      description: "[INDISPONIBLE pour le moment — utilise run_js ou make_zip à la place] Exécution Python sandboxée.",
+      parameters: {
+        type: "object",
+        properties: {
+          code: { type: "string", description: "Code Python complet" },
+          download_path: { type: "string", description: "Chemin d'un fichier produit à uploader pour téléchargement (ex: /tmp/out.zip)" },
+        },
+        required: ["code"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "make_zip",
+      description: "Crée une archive ZIP à partir d'une liste de fichiers (texte ou base64) et retourne un lien de téléchargement valide 7 jours. Idéal pour livrer du code, des assets, des exports.",
+      parameters: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "Nom du ZIP (ex: 'projet.zip')" },
+          files: {
+            type: "array",
+            description: "Liste de fichiers à inclure",
+            items: {
+              type: "object",
+              properties: {
+                path: { type: "string", description: "Chemin relatif dans le ZIP (ex: 'src/index.html')" },
+                content: { type: "string", description: "Contenu texte du fichier" },
+                base64: { type: "string", description: "OU contenu binaire en base64 (sans préfixe data:)" },
+              },
+              required: ["path"],
+            },
+          },
+        },
+        required: ["name", "files"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "generate_image",
+      description: "Génère une image à partir d'un prompt textuel (Gemini 2.5 Flash Image).",
+      parameters: {
+        type: "object",
+        properties: { prompt: { type: "string" } },
+        required: ["prompt"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "remember",
+      description: "Mémoire long-terme par utilisateur. action='save' (key+value), 'list' (tout lister), 'forget' (key).",
+      parameters: {
+        type: "object",
+        properties: {
+          action: { type: "string", enum: ["save", "list", "forget"] },
+          key: { type: "string" },
+          value: { type: "string" },
+        },
+        required: ["action"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "http_request",
+      description: "Requête HTTP GET/POST vers une API externe publique. Bloque les domaines internes.",
+      parameters: {
+        type: "object",
+        properties: {
+          url: { type: "string" },
+          method: { type: "string", enum: ["GET", "POST", "PUT", "DELETE", "PATCH"], default: "GET" },
+          headers: { type: "object" },
+          body: { type: "string", description: "Corps brut (string ou JSON stringifié)" },
+        },
+        required: ["url"],
+      },
+    },
+  },
+];
+
+// ===== E2B sandbox: Python with FS + ZIP =====
+async function toolRunPython(_args: any): Promise<string> {
+  return "❌ run_python est indisponible dans cet environnement (incompatibilité Deno/E2B). Utilise `run_js` pour du calcul, ou `make_zip` pour produire des fichiers téléchargeables.";
+}
+
+async function uploadAndSign(bytes: Uint8Array, filename: string): Promise<string | null> {
+  const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+  const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  const objectPath = `agent/${Date.now()}-${crypto.randomUUID().slice(0,8)}-${filename}`;
+  const up = await fetch(`${SUPABASE_URL}/storage/v1/object/clones/${objectPath}`, {
+    method: "POST",
+    headers: { apikey: SERVICE_KEY, Authorization: `Bearer ${SERVICE_KEY}`, "Content-Type": "application/octet-stream", "x-upsert": "true" },
+    body: bytes,
+  });
+  if (!up.ok) {
+    console.log("upload failed", up.status, await up.text().catch(() => ""));
+    return null;
+  }
+  const sign = await fetch(`${SUPABASE_URL}/storage/v1/object/sign/clones/${objectPath}`, {
+    method: "POST",
+    headers: { apikey: SERVICE_KEY, Authorization: `Bearer ${SERVICE_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ expiresIn: 60 * 60 * 24 * 7 }),
+  });
+  const s = await sign.json().catch(() => null);
+  if (!s?.signedURL) return null;
+  return `${SUPABASE_URL}/storage/v1${s.signedURL}`;
+}
+
+async function toolMakeZip(args: { name: string; files: Array<{ path: string; content?: string; base64?: string }> }): Promise<string> {
+  try {
+    const JSZipMod: any = await import("https://esm.sh/jszip@3.10.1");
+    const JSZip = JSZipMod.default || JSZipMod;
+    const zip = new JSZip();
+    for (const f of args.files || []) {
+      if (!f.path) continue;
+      if (typeof f.base64 === "string" && f.base64.length > 0) {
+        zip.file(f.path, f.base64, { base64: true });
+      } else {
+        zip.file(f.path, f.content ?? "");
+      }
+    }
+    const bytes: Uint8Array = await zip.generateAsync({ type: "uint8array", compression: "DEFLATE" });
+    const filename = args.name.endsWith(".zip") ? args.name : `${args.name}.zip`;
+    const url = await uploadAndSign(bytes, filename);
+    if (!url) return "❌ Upload du ZIP échoué.";
+    return `✅ ZIP créé (${(args.files || []).length} fichiers, ${Math.round(bytes.length / 1024)} KB).\nDOWNLOAD_URL: ${url}\nValide 7 jours.`;
+  } catch (e) {
+    return `❌ make_zip error: ${(e as Error).message}`;
+  }
+}
+
+async function toolCrawl(args: { url: string; limit?: number }): Promise<string> {
+  const key = Deno.env.get("FIRECRAWL_API_KEY");
+  if (!key) return "❌ Firecrawl non configuré.";
+  const limit = Math.min(Math.max(args.limit ?? 10, 1), 25);
+  const start = await fetch("https://api.firecrawl.dev/v2/crawl", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ url: args.url, limit, scrapeOptions: { formats: ["markdown"] } }),
+  });
+  const job = await start.json().catch(() => null);
+  if (!start.ok || !job?.id) return `❌ Crawl init failed (${start.status})`;
+  // Poll up to 45s
+  for (let i = 0; i < 30; i++) {
+    await new Promise((r) => setTimeout(r, 1500));
+    const s = await fetch(`https://api.firecrawl.dev/v2/crawl/${job.id}`, {
+      headers: { Authorization: `Bearer ${key}` },
+    });
+    const sd = await s.json().catch(() => null);
+    if (sd?.status === "completed") {
+      const pages = (sd.data || []).slice(0, limit).map((p: any) =>
+        `### ${p?.metadata?.sourceURL || p?.metadata?.url || "?"}\n${(p?.markdown || "").slice(0, 1500)}`
+      );
+      return pages.join("\n\n---\n\n").slice(0, 8000);
+    }
+    if (sd?.status === "failed") return `❌ Crawl failed`;
+  }
+  return "⏱️ Crawl timeout (45s)";
+}
+
+async function toolHttp(args: any): Promise<string> {
+  try {
+    const url = new URL(args.url);
+    const host = url.hostname.toLowerCase();
+    const blocked = ["localhost", "127.", "169.254.", "metadata.", "supabase.co", "0.0.0.0", "::1"];
+    if (blocked.some((b) => host === b || host.startsWith(b) || host.includes(b))) {
+      return `❌ Domaine bloqué: ${host}`;
+    }
+    const r = await fetch(args.url, {
+      method: args.method || "GET",
+      headers: args.headers || {},
+      body: args.body,
+    });
+    const ct = r.headers.get("content-type") || "";
+    const text = (await r.text()).slice(0, 6000);
+    return `HTTP ${r.status} (${ct})\n\n${text}`;
+  } catch (e) {
+    return `❌ HTTP error: ${(e as Error).message}`;
+  }
+}
+
+async function executeTool(name: string, args: any, userId: string | null): Promise<string> {
+  try {
+    switch (name) {
+      case "web_search": return await capWebSearch(args.query);
+      case "scrape_url": return await capScrape(args.url);
+      case "crawl_site": return await toolCrawl(args);
+      case "run_js": return await capRunJs(args.code);
+      case "run_python": return await toolRunPython(args);
+      case "make_zip": return await toolMakeZip(args);
+      case "generate_image": return await capGenImage(args.prompt);
+      case "remember": {
+        if (!userId) return "❌ Mémoire indisponible (non connecté).";
+        if (args.action === "list") return await capMemory(userId, "list");
+        if (args.action === "forget") return await capMemory(userId, `forget ${args.key}`);
+        if (args.action === "save") return await capMemory(userId, `${args.key}: ${args.value}`);
+        return "❌ action invalide";
+      }
+      case "http_request": return await toolHttp(args);
+      default: return `❌ outil inconnu: ${name}`;
+    }
+  } catch (e) {
+    return `❌ exec error: ${(e as Error).message}`;
+  }
+}
+
+async function runAgentLoop(
+  apiKey: string,
+  systemPrompt: string,
+  userMessages: any[],
+  userId: string | null,
+  model: string,
+): Promise<string | null> {
+  const convo: any[] = [
+    { role: "system", content: systemPrompt + "\n\nTu as accès à des OUTILS autonomes (web_search, scrape_url, crawl_site, run_js, run_python avec FS+ZIP, generate_image, remember, http_request). Invoque-les TOI-MÊME dès qu'utile, en parallèle si possible. Pour livrer un fichier (ZIP, CSV, image générée par script), utilise run_python avec download_path — la réponse inclura un DOWNLOAD_URL à transmettre tel quel à l'utilisateur en markdown [Télécharger](url). Ne demande JAMAIS la permission, agis." },
+    ...userMessages,
+  ];
+
+  for (let step = 0; step < 20; step++) {
+    const resp = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      method: "POST",
+      headers: { "Lovable-API-Key": apiKey, "Content-Type": "application/json" },
+      body: JSON.stringify({ model, messages: convo, tools: AGENT_TOOLS, tool_choice: "auto" }),
+    });
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => "");
+      console.log(`Agent step ${step} model error ${resp.status}: ${errText.slice(0, 200)}`);
+      return null;
+    }
+    const data = await resp.json();
+    const msg = data?.choices?.[0]?.message;
+    if (!msg) return null;
+    const toolCalls = msg.tool_calls || [];
+    if (toolCalls.length === 0) {
+      return typeof msg.content === "string" ? msg.content : null;
+    }
+    convo.push({ role: "assistant", content: msg.content ?? "", tool_calls: toolCalls });
+    const results = await Promise.all(
+      toolCalls.map(async (tc: any) => {
+        let args: any = {};
+        try { args = JSON.parse(tc.function?.arguments || "{}"); } catch {}
+        console.log(`Agent step ${step}: ${tc.function?.name}(${JSON.stringify(args).slice(0,100)})`);
+        const out = await executeTool(tc.function?.name, args, userId);
+        return { id: tc.id, name: tc.function?.name, out };
+      })
+    );
+    for (const r of results) {
+      convo.push({ role: "tool", tool_call_id: r.id, name: r.name, content: r.out.slice(0, 12000) });
+    }
+  }
+  return "⚠️ Limite de 20 étapes atteinte sans réponse finale. Reformule ou simplifie ta demande.";
+}
+
+const AGENT_MODELS = ["google/gemini-2.5-flash", "openai/gpt-5-mini", "google/gemini-2.5-pro"];
+
 const STANDARD_MODELS = [
   "google/gemini-2.5-flash",
   "google/gemini-2.5-flash-lite",
@@ -601,6 +924,30 @@ serve(async (req) => {
 
     const providerMessages = prepareMessagesForProvider(cleanMessages, containsImage);
     const allMessages = [{ role: "system", content: systemPrompt + memoryBlock }, ...providerMessages];
+
+    // ===== PRIORITY 0: Autonomous agent loop with tools =====
+    // Skip for vision (tool-calling + multimodal mixes poorly across providers)
+    if (LOVABLE_API_KEY && !containsImage) {
+      try {
+        for (const agentModel of AGENT_MODELS) {
+          const agentText = await runAgentLoop(
+            LOVABLE_API_KEY,
+            systemPrompt + memoryBlock,
+            providerMessages,
+            userId,
+            agentModel,
+          );
+          if (agentText && agentText.trim()) {
+            return new Response(
+              JSON.stringify({ choices: [{ message: { content: agentText } }] }),
+              { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+          }
+        }
+      } catch (e) {
+        console.error("Agent loop error, falling back:", e);
+      }
+    }
 
     // PRIORITY 1: Direct Gemini (free quota, no Lovable credits used)
     const geminiKeys = getValidGeminiKeys();
