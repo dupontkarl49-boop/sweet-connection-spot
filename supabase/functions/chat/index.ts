@@ -276,11 +276,11 @@ const AGENT_TOOLS = [
 
 // ===== E2B sandbox: Python with FS + ZIP =====
 async function toolRunPython(args: { code: string; download_path?: string }): Promise<string> {
-  const E2B_KEY = Deno.env.get("E2B_API_KEY");
+  const E2B_KEY = (Deno.env.get("E2B_API_KEY") || "").trim().replace(/^["']|["']$/g, "");
   if (!E2B_KEY) return "❌ E2B non configuré.";
+  console.log(`E2B key len=${E2B_KEY.length} prefix=${E2B_KEY.slice(0,6)}`);
   try {
-    // Use E2B Code Interpreter SDK via npm:
-    const { Sandbox } = await import("npm:@e2b/code-interpreter@^1.0.0");
+    const { Sandbox } = await import("npm:@e2b/code-interpreter@2");
     const sbx = await Sandbox.create({ apiKey: E2B_KEY, timeoutMs: 60_000 });
     try {
       const exec = await sbx.runCode(args.code, { timeoutMs: 45_000 });
