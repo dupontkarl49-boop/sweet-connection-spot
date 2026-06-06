@@ -901,6 +901,30 @@ serve(async (req) => {
     const providerMessages = prepareMessagesForProvider(cleanMessages, containsImage);
     const allMessages = [{ role: "system", content: systemPrompt + memoryBlock }, ...providerMessages];
 
+    // ===== PRIORITY 0: Autonomous agent loop with tools =====
+    // Skip for vision (tool-calling + multimodal mixes poorly across providers)
+    if (LOVABLE_API_KEY && !containsImage) {
+      try {
+        for (const agentModel of AGENT_MODELS) {
+          const agentText = await runAgentLoop(
+            LOVABLE_API_KEY,
+            systemPrompt + memoryBlock,
+            providerMessages,
+            userId,
+            agentModel,
+          );
+          if (agentText && agentText.trim()) {
+            return new Response(
+              JSON.stringify({ choices: [{ message: { content: agentText } }] }),
+              { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+          }
+        }
+      } catch (e) {
+        console.error("Agent loop error, falling back:", e);
+      }
+    }
+
     // PRIORITY 1: Direct Gemini (free quota, no Lovable credits used)
     const geminiKeys = getValidGeminiKeys();
     const geminiResponse = await tryGeminiDirect(geminiKeys, allMessages);
