@@ -152,6 +152,32 @@ async function callGemini(prompt: string): Promise<string> {
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
+  // ===== AUTH: require either a valid user session or the service-role key
+  // (used by chat/telegram-webhook when they internally forward /clone requests).
+  const authHeader = req.headers.get("authorization") || "";
+  const token = authHeader.replace(/^Bearer\s+/i, "");
+  const SUPABASE_URL_AUTH = Deno.env.get("SUPABASE_URL") || "";
+  const ANON_KEY_AUTH = Deno.env.get("SUPABASE_ANON_KEY") || "";
+  const SERVICE_ROLE_AUTH = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+  let authorized = false;
+  if (token && SERVICE_ROLE_AUTH && token === SERVICE_ROLE_AUTH) {
+    authorized = true;
+  } else if (token && SUPABASE_URL_AUTH && ANON_KEY_AUTH) {
+    try {
+      const authClient = createClient(SUPABASE_URL_AUTH, ANON_KEY_AUTH, {
+        auth: { persistSession: false, autoRefreshToken: false },
+      });
+      const { data, error } = await authClient.auth.getUser(token);
+      if (!error && data?.user?.id) authorized = true;
+    } catch (_e) { /* fallthrough to 401 */ }
+  }
+  if (!authorized) {
+    return new Response(
+      JSON.stringify({ error: "Unauthorized" }),
+      { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
+
   try {
     const { url } = await req.json();
     if (!url || typeof url !== "string" || !/^https?:\/\//i.test(url)) {

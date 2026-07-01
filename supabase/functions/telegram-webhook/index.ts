@@ -2,8 +2,18 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
 const TELEGRAM_API = "https://api.telegram.org/bot";
 
-const SECRET_KEY = "Sigma -1-x orc0p/∆{}";
-const SECRET_KEY_ALT = "Sigma -1-x orc0p/Δ{}";
+// Unlock passphrase(s) loaded from edge-function secrets (never hardcoded).
+const RAW_UNLOCK_SECRET = Deno.env.get("UNLOCK_SECRET") || "";
+const RAW_UNLOCK_SECRET_ALT = Deno.env.get("UNLOCK_SECRET_ALT") || "";
+const UNLOCK_KEYS = [RAW_UNLOCK_SECRET, RAW_UNLOCK_SECRET_ALT].filter((k) => k.length >= 8);
+
+// Constant-time string comparison to prevent timing attacks.
+function safeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
 
 const STANDARD_MODELS = [
   "google/gemini-2.5-flash",
@@ -101,11 +111,12 @@ function isRefusal(content: string): boolean {
 }
 
 function checkUnlock(text: string): { unlocked: boolean; cleanText: string } {
-  if (text.includes(SECRET_KEY) || text.includes(SECRET_KEY_ALT)) {
-    return {
-      unlocked: true,
-      cleanText: text.replace(SECRET_KEY, "").replace(SECRET_KEY_ALT, "").trim(),
-    };
+  if (UNLOCK_KEYS.length === 0) return { unlocked: false, cleanText: text };
+  const hit = UNLOCK_KEYS.some((k) => text.includes(k));
+  if (hit) {
+    let clean = text;
+    for (const k of UNLOCK_KEYS) clean = clean.split(k).join("");
+    return { unlocked: true, cleanText: clean.trim() };
   }
   return { unlocked: false, cleanText: text };
 }
@@ -255,6 +266,20 @@ serve(async (req) => {
   if (!TELEGRAM_BOT_TOKEN) {
     console.error("Missing env vars");
     return new Response("Config error", { status: 500 });
+  }
+
+  // ===== Verify Telegram webhook signature =====
+  // When registering the webhook via setWebhook, pass `secret_token: <TELEGRAM_WEBHOOK_SECRET>`.
+  // Telegram then echoes it back in this header on every genuine update.
+  const WEBHOOK_SECRET = Deno.env.get("TELEGRAM_WEBHOOK_SECRET") || "";
+  if (!WEBHOOK_SECRET) {
+    console.error("TELEGRAM_WEBHOOK_SECRET not configured — refusing all webhook calls.");
+    return new Response("Forbidden", { status: 403 });
+  }
+  const incomingSecret = req.headers.get("x-telegram-bot-api-secret-token") || "";
+  if (!safeEqual(incomingSecret, WEBHOOK_SECRET)) {
+    console.warn("Rejected Telegram webhook: bad secret token.");
+    return new Response("Forbidden", { status: 403 });
   }
 
   try {

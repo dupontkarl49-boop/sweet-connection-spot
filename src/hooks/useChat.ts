@@ -163,15 +163,23 @@ export function useChat(userId: string | undefined) {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+          Authorization: `Bearer ${
+            (await supabase.auth.getSession()).data.session?.access_token ?? ""
+          }`,
+          apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
         },
         body: JSON.stringify({ messages: apiMessages }),
       });
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        
-        if (response.status === 429) {
+        if (response.status === 401) {
+          toast({
+            title: "🔒 Session expirée",
+            description: "Reconnecte-toi pour continuer.",
+            variant: "destructive",
+          });
+        } else if (response.status === 429) {
           toast({
             title: "⏳ Trop de requêtes",
             description: "L'API Gemini gratuite est limitée à 15 requêtes/minute. Attends 30 secondes puis réessaie.",

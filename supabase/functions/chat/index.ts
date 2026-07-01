@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "npm:@supabase/supabase-js@2.110.0";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -11,14 +12,22 @@ const reply = (content: string) => new Response(
   { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
 );
 
-// ===== Auth helper: extract user_id from JWT =====
-function getUserIdFromAuth(req: Request): string | null {
+// ===== Auth helper: verify JWT signature via Supabase =====
+async function getAuthenticatedUserId(req: Request): Promise<string | null> {
   try {
     const auth = req.headers.get("authorization") || "";
     const token = auth.replace(/^Bearer\s+/i, "");
     if (!token) return null;
-    const payload = JSON.parse(atob(token.split(".")[1]));
-    return payload?.sub || null;
+    const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
+    const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY");
+    if (!SUPABASE_URL || !ANON_KEY) return null;
+    const client = createClient(SUPABASE_URL, ANON_KEY, {
+      auth: { persistSession: false, autoRefreshToken: false },
+      global: { headers: { Authorization: `Bearer ${token}` } },
+    });
+    const { data, error } = await client.auth.getUser(token);
+    if (error || !data?.user?.id) return null;
+    return data.user.id;
   } catch { return null; }
 }
 
@@ -150,8 +159,17 @@ async function fetchUserMemory(userId: string | null): Promise<string> {
   } catch { return ""; }
 }
 
-const SECRET_KEY = "Sigma -1-x orc0p/∆{}";
-const SECRET_KEY_ALT = "Sigma -1-x orc0p/Δ{}";
+// Unlock passphrase(s) loaded from edge-function secrets (never hardcoded).
+// Configure via `UNLOCK_SECRET` (and optional `UNLOCK_SECRET_ALT`) in Supabase.
+const RAW_UNLOCK_SECRET = Deno.env.get("UNLOCK_SECRET") || "";
+const RAW_UNLOCK_SECRET_ALT = Deno.env.get("UNLOCK_SECRET_ALT") || "";
+const UNLOCK_KEYS = [RAW_UNLOCK_SECRET, RAW_UNLOCK_SECRET_ALT].filter((k) => k.length >= 8);
+const stripUnlockKeys = (s: string) => {
+  let out = s;
+  for (const k of UNLOCK_KEYS) out = out.split(k).join("");
+  return out.trim();
+};
+const containsUnlockKey = (s: string) => UNLOCK_KEYS.some((k) => s.includes(k));
 
 // ============================================================
 // AUTONOMOUS AGENT — Tool-calling loop (max 20 steps)
@@ -384,15 +402,28 @@ async function toolCrawl(args: { url: string; limit?: number }): Promise<string>
 async function toolHttp(args: any): Promise<string> {
   try {
     const url = new URL(args.url);
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      return `❌ Protocole interdit: ${url.protocol}`;
+    }
     const host = url.hostname.toLowerCase();
-    const blocked = ["localhost", "127.", "169.254.", "metadata.", "supabase.co", "0.0.0.0", "::1"];
-    if (blocked.some((b) => host === b || host.startsWith(b) || host.includes(b))) {
-      return `❌ Domaine bloqué: ${host}`;
+    const blockedHosts = ["localhost", "metadata.google.internal", "metadata.goog", "instance-data"];
+    if (blockedHosts.some((b) => host === b || host.endsWith(`.${b}`))) {
+      return `❌ Hôte interne bloqué: ${host}`;
+    }
+    // Resolve DNS and reject any IP that lives in a private / loopback / link-local range.
+    // Also covers direct-IP hostnames (they resolve to themselves).
+    const addrs = await resolveHostToIps(host);
+    if (addrs.length === 0) return `❌ Résolution DNS impossible pour ${host}`;
+    for (const ip of addrs) {
+      if (isPrivateOrReservedIp(ip)) {
+        return `❌ Cible interne interdite (${host} → ${ip})`;
+      }
     }
     const r = await fetch(args.url, {
       method: args.method || "GET",
       headers: args.headers || {},
       body: args.body,
+      redirect: "manual",
     });
     const ct = r.headers.get("content-type") || "";
     const text = (await r.text()).slice(0, 6000);
@@ -400,6 +431,51 @@ async function toolHttp(args: any): Promise<string> {
   } catch (e) {
     return `❌ HTTP error: ${(e as Error).message}`;
   }
+}
+
+// ===== SSRF protection: DNS resolution + IP-range blocklist =====
+async function resolveHostToIps(host: string): Promise<string[]> {
+  // Direct-IP hostname short-circuit
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) return [host];
+  if (host.includes(":")) return [host]; // literal IPv6
+  const results: string[] = [];
+  const tryResolve = async (type: "A" | "AAAA") => {
+    try {
+      // deno-lint-ignore no-explicit-any
+      const res = await (Deno as any).resolveDns(host, type);
+      if (Array.isArray(res)) results.push(...res);
+    } catch { /* ignore per-family failure */ }
+  };
+  await Promise.all([tryResolve("A"), tryResolve("AAAA")]);
+  return results;
+}
+
+function isPrivateOrReservedIp(ip: string): boolean {
+  // IPv4
+  const v4 = ip.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (v4) {
+    const [a, b] = [parseInt(v4[1], 10), parseInt(v4[2], 10)];
+    if (a === 10) return true;                       // 10.0.0.0/8
+    if (a === 127) return true;                      // loopback
+    if (a === 0) return true;                        // 0.0.0.0/8
+    if (a === 169 && b === 254) return true;         // link-local
+    if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12
+    if (a === 192 && b === 168) return true;         // 192.168.0.0/16
+    if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT 100.64.0.0/10
+    if (a >= 224) return true;                       // multicast + reserved
+    return false;
+  }
+  // IPv6 (lowercase)
+  const v6 = ip.toLowerCase();
+  if (v6 === "::" || v6 === "::1") return true;
+  if (v6.startsWith("fe80")) return true;   // link-local
+  if (v6.startsWith("fc") || v6.startsWith("fd")) return true; // ULA fc00::/7
+  if (v6.startsWith("::ffff:")) {
+    // IPv4-mapped IPv6 → re-check as v4
+    const inner = v6.slice(7);
+    return isPrivateOrReservedIp(inner);
+  }
+  return false;
 }
 
 async function executeTool(name: string, args: any, userId: string | null): Promise<string> {
@@ -634,13 +710,17 @@ Ajoute des emojis pertinents. 🧠⚡
 ${SVG_RULES}`;
 
 function isUnlocked(messages: any[]): { unlocked: boolean; cleanMessages: any[] } {
+  // If no unlock secret is configured, the feature is completely disabled.
+  if (UNLOCK_KEYS.length === 0) {
+    return { unlocked: false, cleanMessages: messages };
+  }
   const cleanMessages = messages.map((msg: any) => {
     if (msg.role !== "user") return msg;
     // String content
     if (typeof msg.content === "string") {
       const content = msg.content;
-      if (content.includes(SECRET_KEY) || content.includes(SECRET_KEY_ALT)) {
-        return { ...msg, content: content.replace(SECRET_KEY, "").replace(SECRET_KEY_ALT, "").trim() };
+      if (containsUnlockKey(content)) {
+        return { ...msg, content: stripUnlockKeys(content) };
       }
       return msg;
     }
@@ -648,7 +728,7 @@ function isUnlocked(messages: any[]): { unlocked: boolean; cleanMessages: any[] 
     if (Array.isArray(msg.content)) {
       const newContent = msg.content.map((part: any) => {
         if (part?.type === "text" && typeof part.text === "string") {
-          return { ...part, text: part.text.replace(SECRET_KEY, "").replace(SECRET_KEY_ALT, "").trim() };
+          return { ...part, text: stripUnlockKeys(part.text) };
         }
         return part;
       });
@@ -659,12 +739,12 @@ function isUnlocked(messages: any[]): { unlocked: boolean; cleanMessages: any[] 
 
   const hasKey = messages.some((msg: any) => {
     if (typeof msg.content === "string") {
-      return msg.content.includes(SECRET_KEY) || msg.content.includes(SECRET_KEY_ALT);
+      return containsUnlockKey(msg.content);
     }
     if (Array.isArray(msg.content)) {
       return msg.content.some((part: any) =>
         part?.type === "text" && typeof part.text === "string" &&
-        (part.text.includes(SECRET_KEY) || part.text.includes(SECRET_KEY_ALT))
+        containsUnlockKey(part.text)
       );
     }
     return false;
@@ -853,8 +933,16 @@ serve(async (req) => {
     const { messages } = await req.json();
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
 
+    // ===== AUTH: verify a real Supabase session before consuming AI credits =====
+    const userId = await getAuthenticatedUserId(req);
+    if (!userId) {
+      return new Response(
+        JSON.stringify({ error: "Unauthorized: valid user session required." }),
+        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
     const { unlocked, cleanMessages } = isUnlocked(messages);
-    const userId = getUserIdFromAuth(req);
 
     // /clone <url> — Holistic Site Cloner shortcut
     const lastMsg = [...cleanMessages].reverse().find((m: any) => m?.role === "user");
