@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "npm:@supabase/supabase-js@2.110.0";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -11,14 +12,22 @@ const reply = (content: string) => new Response(
   { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
 );
 
-// ===== Auth helper: extract user_id from JWT =====
-function getUserIdFromAuth(req: Request): string | null {
+// ===== Auth helper: verify JWT signature via Supabase =====
+async function getAuthenticatedUserId(req: Request): Promise<string | null> {
   try {
     const auth = req.headers.get("authorization") || "";
     const token = auth.replace(/^Bearer\s+/i, "");
     if (!token) return null;
-    const payload = JSON.parse(atob(token.split(".")[1]));
-    return payload?.sub || null;
+    const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
+    const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY");
+    if (!SUPABASE_URL || !ANON_KEY) return null;
+    const client = createClient(SUPABASE_URL, ANON_KEY, {
+      auth: { persistSession: false, autoRefreshToken: false },
+      global: { headers: { Authorization: `Bearer ${token}` } },
+    });
+    const { data, error } = await client.auth.getUser(token);
+    if (error || !data?.user?.id) return null;
+    return data.user.id;
   } catch { return null; }
 }
 
