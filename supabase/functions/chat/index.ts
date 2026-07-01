@@ -933,8 +933,16 @@ serve(async (req) => {
     const { messages } = await req.json();
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
 
+    // ===== AUTH: verify a real Supabase session before consuming AI credits =====
+    const userId = await getAuthenticatedUserId(req);
+    if (!userId) {
+      return new Response(
+        JSON.stringify({ error: "Unauthorized: valid user session required." }),
+        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
     const { unlocked, cleanMessages } = isUnlocked(messages);
-    const userId = getUserIdFromAuth(req);
 
     // /clone <url> — Holistic Site Cloner shortcut
     const lastMsg = [...cleanMessages].reverse().find((m: any) => m?.role === "user");
