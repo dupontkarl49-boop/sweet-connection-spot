@@ -710,13 +710,17 @@ Ajoute des emojis pertinents. 🧠⚡
 ${SVG_RULES}`;
 
 function isUnlocked(messages: any[]): { unlocked: boolean; cleanMessages: any[] } {
+  // If no unlock secret is configured, the feature is completely disabled.
+  if (UNLOCK_KEYS.length === 0) {
+    return { unlocked: false, cleanMessages: messages };
+  }
   const cleanMessages = messages.map((msg: any) => {
     if (msg.role !== "user") return msg;
     // String content
     if (typeof msg.content === "string") {
       const content = msg.content;
-      if (content.includes(SECRET_KEY) || content.includes(SECRET_KEY_ALT)) {
-        return { ...msg, content: content.replace(SECRET_KEY, "").replace(SECRET_KEY_ALT, "").trim() };
+      if (containsUnlockKey(content)) {
+        return { ...msg, content: stripUnlockKeys(content) };
       }
       return msg;
     }
@@ -724,7 +728,7 @@ function isUnlocked(messages: any[]): { unlocked: boolean; cleanMessages: any[] 
     if (Array.isArray(msg.content)) {
       const newContent = msg.content.map((part: any) => {
         if (part?.type === "text" && typeof part.text === "string") {
-          return { ...part, text: part.text.replace(SECRET_KEY, "").replace(SECRET_KEY_ALT, "").trim() };
+          return { ...part, text: stripUnlockKeys(part.text) };
         }
         return part;
       });
@@ -735,12 +739,12 @@ function isUnlocked(messages: any[]): { unlocked: boolean; cleanMessages: any[] 
 
   const hasKey = messages.some((msg: any) => {
     if (typeof msg.content === "string") {
-      return msg.content.includes(SECRET_KEY) || msg.content.includes(SECRET_KEY_ALT);
+      return containsUnlockKey(msg.content);
     }
     if (Array.isArray(msg.content)) {
       return msg.content.some((part: any) =>
         part?.type === "text" && typeof part.text === "string" &&
-        (part.text.includes(SECRET_KEY) || part.text.includes(SECRET_KEY_ALT))
+        containsUnlockKey(part.text)
       );
     }
     return false;
