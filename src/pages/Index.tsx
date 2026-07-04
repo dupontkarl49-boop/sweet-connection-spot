@@ -37,13 +37,24 @@ const Index = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // Auto-redirect to a conversation when landing on "/"
+  // Remember last opened conversation per user
+  const lastConvKey = user ? `sigma_last_conversation_${user.id}` : null;
+
   useEffect(() => {
-    if (!user || convosLoading || conversationId) return;
-    if (conversations.length > 0) {
-      navigate(`/c/${conversations[0].id}`, { replace: true });
-    }
-  }, [user, convosLoading, conversationId, conversations, navigate]);
+    if (!lastConvKey || !conversationId) return;
+    localStorage.setItem(lastConvKey, conversationId);
+  }, [lastConvKey, conversationId]);
+
+  // Auto-redirect to the last opened conversation when landing on "/"
+  useEffect(() => {
+    if (!user || convosLoading || conversationId || !lastConvKey) return;
+    if (conversations.length === 0) return;
+    const savedId = localStorage.getItem(lastConvKey);
+    const target = savedId && conversations.some((c) => c.id === savedId)
+      ? savedId
+      : conversations[0].id;
+    navigate(`/c/${target}`, { replace: true });
+  }, [user, convosLoading, conversationId, conversations, navigate, lastConvKey]);
 
   const handleNew = async () => {
     const id = await createConversation();
