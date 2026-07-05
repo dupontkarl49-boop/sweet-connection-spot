@@ -1,12 +1,10 @@
-import { useRef, useEffect, useState } from "react";
-import { Navigate, useNavigate, useParams } from "react-router-dom";
+import { useRef, useEffect } from "react";
+import { Navigate } from "react-router-dom";
 import { ChatMessage } from "@/components/ChatMessage";
 import { ChatInput } from "@/components/ChatInput";
 import { useChat } from "@/hooks/useChat";
 import { useAuth } from "@/hooks/useAuth";
-import { useConversations } from "@/hooks/useConversations";
-import { ConversationSidebar } from "@/components/ConversationSidebar";
-import { Bot, Sparkles, Trash2, LogOut, Menu } from "lucide-react";
+import { Bot, Sparkles, Trash2, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   AlertDialog,
@@ -22,47 +20,12 @@ import {
 
 const Index = () => {
   const { user, loading, signOut } = useAuth();
-  const navigate = useNavigate();
-  const { conversationId } = useParams<{ conversationId: string }>();
-  const { conversations, loading: convosLoading, createConversation, deleteConversation } =
-    useConversations(user?.id);
-  const { messages, isLoading, isHistoryLoading, sendMessage, clearMessages } = useChat(
-    user?.id,
-    conversationId
-  );
+  const { messages, isLoading, isHistoryLoading, sendMessage, clearMessages } = useChat(user?.id);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
-
-  // Remember last opened conversation per user
-  const lastConvKey = user ? `sigma_last_conversation_${user.id}` : null;
-
-  useEffect(() => {
-    if (!lastConvKey || !conversationId) return;
-    localStorage.setItem(lastConvKey, conversationId);
-  }, [lastConvKey, conversationId]);
-
-  // Auto-redirect to the last opened conversation when landing on "/"
-  useEffect(() => {
-    if (!user || convosLoading || conversationId || !lastConvKey) return;
-    if (conversations.length === 0) return;
-    const savedId = localStorage.getItem(lastConvKey);
-    const target = savedId && conversations.some((c) => c.id === savedId)
-      ? savedId
-      : conversations[0].id;
-    navigate(`/c/${target}`, { replace: true });
-  }, [user, convosLoading, conversationId, conversations, navigate, lastConvKey]);
-
-  const handleNew = async () => {
-    const id = await createConversation();
-    if (id) {
-      setSidebarOpen(false);
-      navigate(`/c/${id}`);
-    }
-  };
 
   if (loading) {
     return (
@@ -77,46 +40,11 @@ const Index = () => {
   }
 
   return (
-    <div className="min-h-screen bg-background flex">
-      {/* Sidebar - desktop */}
-      <div className="hidden md:flex md:sticky md:top-0 md:h-screen">
-        <ConversationSidebar
-          conversations={conversations}
-          activeId={conversationId}
-          onNew={handleNew}
-          onDelete={deleteConversation}
-        />
-      </div>
-
-      {/* Sidebar - mobile drawer */}
-      {sidebarOpen && (
-        <div className="fixed inset-0 z-50 md:hidden">
-          <div className="absolute inset-0 bg-background/80 backdrop-blur-sm" onClick={() => setSidebarOpen(false)} />
-          <div className="absolute inset-y-0 left-0 h-full">
-            <ConversationSidebar
-              conversations={conversations}
-              activeId={conversationId}
-              onNew={handleNew}
-              onDelete={deleteConversation}
-              onClose={() => setSidebarOpen(false)}
-            />
-          </div>
-        </div>
-      )}
-
-      <div className="flex min-h-screen flex-1 flex-col">
+    <div className="min-h-screen bg-background flex flex-col">
       {/* Header */}
       <header className="border-b border-border bg-card/50 backdrop-blur-xl sticky top-0 z-10">
         <div className="max-w-4xl mx-auto px-4 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <Button
-              variant="ghost"
-              size="icon"
-              className="md:hidden"
-              onClick={() => setSidebarOpen(true)}
-            >
-              <Menu className="w-5 h-5" />
-            </Button>
             <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary to-accent flex items-center justify-center shadow-lg shadow-primary/25">
               <Bot className="w-6 h-6 text-primary-foreground" />
             </div>
@@ -130,7 +58,7 @@ const Index = () => {
             </div>
           </div>
           <div className="flex items-center gap-1">
-            {messages.length > 0 && conversationId && (
+            {messages.length > 0 && (
               <AlertDialog>
                 <AlertDialogTrigger asChild>
                   <Button
@@ -144,10 +72,10 @@ const Index = () => {
                 </AlertDialogTrigger>
                 <AlertDialogContent>
                   <AlertDialogHeader>
-                    <AlertDialogTitle>Effacer les messages de cette conversation ?</AlertDialogTitle>
+                    <AlertDialogTitle>Effacer l'historique ?</AlertDialogTitle>
                     <AlertDialogDescription>
-                      Cette action est <strong>irréversible</strong>. Tous les messages de cette
-                      conversation seront définitivement supprimés.
+                      Cette action est <strong>irréversible</strong>. Tous tes messages seront
+                      définitivement supprimés.
                     </AlertDialogDescription>
                   </AlertDialogHeader>
                   <AlertDialogFooter>
@@ -178,20 +106,7 @@ const Index = () => {
       {/* Messages */}
       <main className="flex-1 overflow-y-auto">
         <div className="max-w-4xl mx-auto px-4 py-6 space-y-4">
-          {!conversationId ? (
-            <div className="flex flex-col items-center justify-center min-h-[60vh] text-center">
-              <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-primary/20 to-accent/20 border border-primary/30 flex items-center justify-center mb-6">
-                <Sparkles className="w-10 h-10 text-primary" />
-              </div>
-              <h2 className="text-2xl font-bold text-foreground mb-2">Bienvenue sur SIGMA</h2>
-              <p className="text-muted-foreground max-w-md mb-6">
-                Crée ta première conversation pour commencer.
-              </p>
-              <Button onClick={handleNew} className="bg-primary text-primary-foreground hover:bg-primary/90">
-                Nouvelle conversation
-              </Button>
-            </div>
-          ) : isHistoryLoading ? (
+          {isHistoryLoading ? (
             <div className="flex flex-col items-center justify-center min-h-[60vh] text-center">
               <Sparkles className="w-8 h-8 text-primary animate-pulse mb-4" />
               <p className="text-muted-foreground">Chargement de l'historique...</p>
@@ -253,10 +168,9 @@ const Index = () => {
       {/* Input */}
       <footer className="border-t border-border bg-background/80 backdrop-blur-xl sticky bottom-0">
         <div className="max-w-4xl mx-auto px-4 py-4">
-          <ChatInput onSend={sendMessage} isLoading={isLoading || !conversationId} />
+          <ChatInput onSend={sendMessage} isLoading={isLoading} />
         </div>
       </footer>
-      </div>
     </div>
   );
 };
