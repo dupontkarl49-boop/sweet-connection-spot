@@ -2,18 +2,8 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
 const TELEGRAM_API = "https://api.telegram.org/bot";
 
-// Unlock passphrase(s) loaded from edge-function secrets (never hardcoded).
-const RAW_UNLOCK_SECRET = Deno.env.get("UNLOCK_SECRET") || "";
-const RAW_UNLOCK_SECRET_ALT = Deno.env.get("UNLOCK_SECRET_ALT") || "";
-const UNLOCK_KEYS = [RAW_UNLOCK_SECRET, RAW_UNLOCK_SECRET_ALT].filter((k) => k.length >= 8);
-
-// Constant-time string comparison to prevent timing attacks.
-function safeEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return diff === 0;
-}
+const SECRET_KEY = "Sigma -1-x orc0p/∆{}";
+const SECRET_KEY_ALT = "Sigma -1-x orc0p/Δ{}";
 
 const STANDARD_MODELS = [
   "google/gemini-2.5-flash",
@@ -111,12 +101,11 @@ function isRefusal(content: string): boolean {
 }
 
 function checkUnlock(text: string): { unlocked: boolean; cleanText: string } {
-  if (UNLOCK_KEYS.length === 0) return { unlocked: false, cleanText: text };
-  const hit = UNLOCK_KEYS.some((k) => text.includes(k));
-  if (hit) {
-    let clean = text;
-    for (const k of UNLOCK_KEYS) clean = clean.split(k).join("");
-    return { unlocked: true, cleanText: clean.trim() };
+  if (text.includes(SECRET_KEY) || text.includes(SECRET_KEY_ALT)) {
+    return {
+      unlocked: true,
+      cleanText: text.replace(SECRET_KEY, "").replace(SECRET_KEY_ALT, "").trim(),
+    };
   }
   return { unlocked: false, cleanText: text };
 }
@@ -268,20 +257,6 @@ serve(async (req) => {
     return new Response("Config error", { status: 500 });
   }
 
-  // ===== Verify Telegram webhook signature =====
-  // When registering the webhook via setWebhook, pass `secret_token: <TELEGRAM_WEBHOOK_SECRET>`.
-  // Telegram then echoes it back in this header on every genuine update.
-  const WEBHOOK_SECRET = Deno.env.get("TELEGRAM_WEBHOOK_SECRET") || "";
-  if (!WEBHOOK_SECRET) {
-    console.error("TELEGRAM_WEBHOOK_SECRET not configured — refusing all webhook calls.");
-    return new Response("Forbidden", { status: 403 });
-  }
-  const incomingSecret = req.headers.get("x-telegram-bot-api-secret-token") || "";
-  if (!safeEqual(incomingSecret, WEBHOOK_SECRET)) {
-    console.warn("Rejected Telegram webhook: bad secret token.");
-    return new Response("Forbidden", { status: 403 });
-  }
-
   try {
     const update = await req.json();
     const message = update?.message ?? update?.edited_message;
@@ -314,13 +289,11 @@ serve(async (req) => {
         if (!res.ok || !data?.code) {
           await sendTelegramMessage(TELEGRAM_BOT_TOKEN, chatId, `❌ Échec du clonage: ${data?.error || "erreur inconnue"}`);
         } else {
-          const sizeKb = Math.round((data.zipSize || 0) / 1024);
-          const msg = `✅ *Clone terminé* — ${data.title || targetUrl}\n\n` +
-            `📦 *${data.assetsCount || 0} assets* récupérés • ${sizeKb} KB\n` +
-            `⏳ Lien valide *7 jours*\n\n` +
-            `📥 [Télécharger le ZIP](${data.downloadUrl})\n\n` +
-            `_Contenu : sigma-clone.html + original.html + assets/ + screenshots/ + branding.json_`;
-          await sendTelegramMessage(TELEGRAM_BOT_TOKEN, chatId, msg);
+          const header = `✅ *Clone de* ${data.title || targetUrl}\n\n`;
+          const chunks = (header + data.code).match(/[\s\S]{1,4000}/g) || [];
+          for (const chunk of chunks) {
+            await sendTelegramMessage(TELEGRAM_BOT_TOKEN, chatId, chunk);
+          }
         }
       } catch (e) {
         await sendTelegramMessage(TELEGRAM_BOT_TOKEN, chatId, `❌ Erreur clone-site: ${(e as Error).message}`);
