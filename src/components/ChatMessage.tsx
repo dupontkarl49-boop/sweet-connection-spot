@@ -5,11 +5,13 @@ interface ChatMessageProps {
   role: "user" | "assistant";
   content: string;
   image?: string;
+  images?: string[];
   isStreaming?: boolean;
 }
 
-export function ChatMessage({ role, content, image, isStreaming }: ChatMessageProps) {
+export function ChatMessage({ role, content, image, images, isStreaming }: ChatMessageProps) {
   const isUser = role === "user";
+  const allImages = images && images.length > 0 ? images : image ? [image] : [];
 
   return (
     <div
@@ -38,12 +40,17 @@ export function ChatMessage({ role, content, image, isStreaming }: ChatMessagePr
         <p className="text-sm font-medium mb-1 text-muted-foreground">
           {isUser ? "Toi" : "SIGMA"}
         </p>
-        {image && (
-          <img
-            src={image}
-            alt="Image envoyée"
-            className="max-w-xs max-h-48 rounded-lg border border-border mb-2 object-contain"
-          />
+        {allImages.length > 0 && (
+          <div className="flex flex-wrap gap-2 mb-2">
+            {allImages.map((img, index) => (
+              <img
+                key={index}
+                src={img}
+                alt={`Image envoyée ${index + 1}`}
+                className="max-w-[8rem] max-h-32 rounded-lg border border-border object-contain"
+              />
+            ))}
+          </div>
         )}
         <div className="text-foreground whitespace-pre-wrap break-words">
           {content}

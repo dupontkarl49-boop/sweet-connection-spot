@@ -72,10 +72,10 @@ const Index = () => {
                 </AlertDialogTrigger>
                 <AlertDialogContent>
                   <AlertDialogHeader>
-                    <AlertDialogTitle>Effacer tout l'historique ?</AlertDialogTitle>
+                    <AlertDialogTitle>Effacer l'historique ?</AlertDialogTitle>
                     <AlertDialogDescription>
-                      Cette action est <strong>irréversible</strong>. Toutes tes conversations
-                      avec SIGMA seront définitivement supprimées et ne pourront pas être restaurées.
+                      Cette action est <strong>irréversible</strong>. Tous tes messages seront
+                      définitivement supprimés.
                     </AlertDialogDescription>
                   </AlertDialogHeader>
                   <AlertDialogFooter>
@@ -151,6 +151,7 @@ const Index = () => {
                   role={message.role}
                   content={message.content}
                   image={message.image}
+                  images={message.images}
                   isStreaming={
                     isLoading &&
                     index === messages.length - 1 &&

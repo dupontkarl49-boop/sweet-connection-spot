@@ -6,6 +6,7 @@ type Message = {
   role: "user" | "assistant";
   content: string;
   image?: string;
+  images?: string[];
 };
 
 const CHAT_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/chat`;
@@ -19,6 +20,7 @@ const normalizeMessage = (value: unknown): Message | null => {
     role: message.role,
     content: typeof message.content === "string" ? message.content : "",
     image: typeof message.image === "string" ? message.image : undefined,
+    images: Array.isArray(message.images) ? message.images.filter((i): i is string => typeof i === "string") : undefined,
   };
 };
 
@@ -39,58 +41,70 @@ export function useChat(userId: string | undefined) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isHistoryLoading, setIsHistoryLoading] = useState(true);
+  const [conversationId, setConversationId] = useState<string | undefined>(undefined);
   const { toast } = useToast();
 
-  // Load messages from database when user changes
+  // Load ALL messages for the user (single-conversation mode) and
+  // determine the active conversation id used for future writes.
   useEffect(() => {
     if (!userId) {
       setMessages([]);
+      setConversationId(undefined);
       setIsHistoryLoading(false);
       return;
     }
 
     let cancelled = false;
     setIsHistoryLoading(true);
-    supabase
-      .from("messages")
-      .select("role, content, image")
-      .eq("user_id", userId)
-      .order("created_at", { ascending: true })
-      .then(async ({ data, error }) => {
-        if (cancelled) return;
-        if (error) {
-          console.error("Failed to load history:", error);
-        } else if (data) {
-          const cloudMessages = data.map((m) => ({
-            role: m.role as "user" | "assistant",
-            content: m.content,
-            image: m.image ?? undefined,
-          }));
-          const legacyMessages = loadLegacyHistory();
-          const migrationKey = `${LEGACY_HISTORY_KEY}_migrated_${userId}`;
-          const shouldMigrateLegacy = legacyMessages.length > 0 && !localStorage.getItem(migrationKey);
 
-          if (shouldMigrateLegacy) {
-            const { error: migrationError } = await supabase.from("messages").insert(
-              legacyMessages.map((msg) => ({
-                user_id: userId,
-                role: msg.role,
-                content: msg.content,
-                image: msg.image ?? null,
-              }))
-            );
+    (async () => {
+      // 1. Load every message the user has ever sent, in chronological order.
+      const { data: msgs, error: msgErr } = await supabase
+        .from("messages")
+        .select("role, content, image, images, conversation_id, created_at")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: true });
+      if (cancelled) return;
+      if (msgErr) console.error("Failed to load history:", msgErr);
 
-            if (migrationError) {
-              console.error("Failed to migrate legacy history:", migrationError);
-            } else {
-              localStorage.setItem(migrationKey, "true");
-            }
-          }
+      const loaded = (msgs ?? []).map((m) => ({
+        role: m.role as "user" | "assistant",
+        content: m.content,
+        image: m.image ?? undefined,
+        images: m.images ?? undefined,
+      }));
+      setMessages(loaded);
 
-          setMessages(shouldMigrateLegacy ? [...legacyMessages, ...cloudMessages] : cloudMessages);
-        }
+      // 2. Pick the conversation to keep writing into: the one that
+      //    holds the most recent message, otherwise any existing one,
+      //    otherwise create a fresh one.
+      let activeId: string | undefined;
+      for (let i = (msgs?.length ?? 0) - 1; i >= 0; i--) {
+        const cid = msgs![i].conversation_id;
+        if (cid) { activeId = cid; break; }
+      }
+      if (!activeId) {
+        const { data: convs } = await supabase
+          .from("conversations")
+          .select("id")
+          .eq("user_id", userId)
+          .order("updated_at", { ascending: false })
+          .limit(1);
+        activeId = convs?.[0]?.id;
+      }
+      if (!activeId) {
+        const { data: created } = await supabase
+          .from("conversations")
+          .insert({ user_id: userId, title: "Conversation" })
+          .select("id")
+          .single();
+        activeId = created?.id;
+      }
+      if (!cancelled) {
+        setConversationId(activeId);
         setIsHistoryLoading(false);
-      });
+      }
+    })();
 
     return () => {
       cancelled = true;
@@ -99,24 +113,36 @@ export function useChat(userId: string | undefined) {
 
   const persistMessage = useCallback(
     async (msg: Message) => {
-      if (!userId) return;
+      if (!userId || !conversationId) return;
       const { error } = await supabase.from("messages").insert({
         user_id: userId,
+        conversation_id: conversationId,
         role: msg.role,
         content: msg.content,
         image: msg.image ?? null,
+        images: msg.images ?? null,
       });
       if (error) console.error("Failed to save message:", error);
     },
-    [userId]
+    [userId, conversationId]
   );
 
-  const sendMessage = useCallback(async (input: string, imageBase64?: string) => {
-    if (!userId) return;
-    const userMessage: Message = { role: "user", content: input, image: imageBase64 };
+  const sendMessage = useCallback(async (input: string, imagesBase64?: string[]) => {
+    if (!userId || !conversationId) return;
+    const userMessage: Message = {
+      role: "user",
+      content: input,
+      image: imagesBase64?.[0],
+      images: imagesBase64,
+    };
     setMessages((prev) => [...prev, userMessage]);
     setIsLoading(true);
     persistMessage(userMessage);
+
+    void supabase
+      .from("conversations")
+      .update({ updated_at: new Date().toISOString() })
+      .eq("id", conversationId);
 
     let assistantContent = "";
 
@@ -136,15 +162,13 @@ export function useChat(userId: string | undefined) {
     try {
       // Build messages for API - convert to multimodal format if images present
       const apiMessages = [...messages, userMessage].map((msg) => {
-        if (msg.image) {
+        const imgs = msg.images && msg.images.length > 0 ? msg.images : msg.image ? [msg.image] : [];
+        if (imgs.length > 0) {
           return {
             role: msg.role,
             content: [
               ...(msg.content ? [{ type: "text", text: msg.content }] : []),
-              {
-                type: "image_url",
-                image_url: { url: msg.image }
-              }
+              ...imgs.map((url) => ({ type: "image_url", image_url: { url } })),
             ]
           };
         }
@@ -155,15 +179,23 @@ export function useChat(userId: string | undefined) {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+          Authorization: `Bearer ${
+            (await supabase.auth.getSession()).data.session?.access_token ?? ""
+          }`,
+          apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
         },
         body: JSON.stringify({ messages: apiMessages }),
       });
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        
-        if (response.status === 429) {
+        if (response.status === 401) {
+          toast({
+            title: "🔒 Session expirée",
+            description: "Reconnecte-toi pour continuer.",
+            variant: "destructive",
+          });
+        } else if (response.status === 429) {
           toast({
             title: "⏳ Trop de requêtes",
             description: "L'API Gemini gratuite est limitée à 15 requêtes/minute. Attends 30 secondes puis réessaie.",
@@ -242,9 +274,13 @@ export function useChat(userId: string | undefined) {
       setIsLoading(false);
       if (assistantContent) {
         persistMessage({ role: "assistant", content: assistantContent });
+        void supabase
+          .from("conversations")
+          .update({ updated_at: new Date().toISOString() })
+          .eq("id", conversationId);
       }
     }
-  }, [messages, toast, userId, persistMessage]);
+  }, [messages, toast, userId, conversationId, persistMessage]);
 
   const clearMessages = useCallback(async () => {
     setMessages([]);
