@@ -37,7 +37,7 @@ const loadLegacyHistory = (): Message[] => {
   }
 };
 
-export function useChat(userId: string | undefined) {
+export function useChat(userId: string | undefined, conversationId: string | undefined) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isHistoryLoading, setIsHistoryLoading] = useState(true);
@@ -45,9 +45,9 @@ export function useChat(userId: string | undefined) {
 
   // Load messages from database when user changes
   useEffect(() => {
-    if (!userId) {
+    if (!userId || !conversationId) {
       setMessages([]);
-      setIsHistoryLoading(false);
+      setIsHistoryLoading(!!userId && !conversationId);
       return;
     }
 
@@ -57,6 +57,7 @@ export function useChat(userId: string | undefined) {
       .from("messages")
       .select("role, content, image, images")
       .eq("user_id", userId)
+      .eq("conversation_id", conversationId)
       .order("created_at", { ascending: true })
       .then(async ({ data, error }) => {
         if (cancelled) return;
@@ -69,29 +70,7 @@ export function useChat(userId: string | undefined) {
             image: m.image ?? undefined,
             images: m.images ?? undefined,
           }));
-          const legacyMessages = loadLegacyHistory();
-          const migrationKey = `${LEGACY_HISTORY_KEY}_migrated_${userId}`;
-          const shouldMigrateLegacy = legacyMessages.length > 0 && !localStorage.getItem(migrationKey);
-
-          if (shouldMigrateLegacy) {
-            const { error: migrationError } = await supabase.from("messages").insert(
-              legacyMessages.map((msg) => ({
-                user_id: userId,
-                role: msg.role,
-                content: msg.content,
-                image: msg.image ?? null,
-                images: msg.images ?? null,
-              }))
-            );
-
-            if (migrationError) {
-              console.error("Failed to migrate legacy history:", migrationError);
-            } else {
-              localStorage.setItem(migrationKey, "true");
-            }
-          }
-
-          setMessages(shouldMigrateLegacy ? [...legacyMessages, ...cloudMessages] : cloudMessages);
+          setMessages(cloudMessages);
         }
         setIsHistoryLoading(false);
       });
@@ -99,13 +78,14 @@ export function useChat(userId: string | undefined) {
     return () => {
       cancelled = true;
     };
-  }, [userId]);
+  }, [userId, conversationId]);
 
   const persistMessage = useCallback(
     async (msg: Message) => {
-      if (!userId) return;
+      if (!userId || !conversationId) return;
       const { error } = await supabase.from("messages").insert({
         user_id: userId,
+        conversation_id: conversationId,
         role: msg.role,
         content: msg.content,
         image: msg.image ?? null,
@@ -113,11 +93,11 @@ export function useChat(userId: string | undefined) {
       });
       if (error) console.error("Failed to save message:", error);
     },
-    [userId]
+    [userId, conversationId]
   );
 
   const sendMessage = useCallback(async (input: string, imagesBase64?: string[]) => {
-    if (!userId) return;
+    if (!userId || !conversationId) return;
     const userMessage: Message = {
       role: "user",
       content: input,
@@ -127,6 +107,16 @@ export function useChat(userId: string | undefined) {
     setMessages((prev) => [...prev, userMessage]);
     setIsLoading(true);
     persistMessage(userMessage);
+
+    // Auto-title new conversations from first user message
+    void supabase
+      .from("conversations")
+      .update({
+        title: input.slice(0, 60) || "Nouvelle conversation",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", conversationId)
+      .eq("title", "Nouvelle conversation");
 
     let assistantContent = "";
 
@@ -258,17 +248,22 @@ export function useChat(userId: string | undefined) {
       setIsLoading(false);
       if (assistantContent) {
         persistMessage({ role: "assistant", content: assistantContent });
+        void supabase
+          .from("conversations")
+          .update({ updated_at: new Date().toISOString() })
+          .eq("id", conversationId);
       }
     }
-  }, [messages, toast, userId, persistMessage]);
+  }, [messages, toast, userId, conversationId, persistMessage]);
 
   const clearMessages = useCallback(async () => {
     setMessages([]);
-    if (userId) {
+    if (userId && conversationId) {
       const { error } = await supabase
         .from("messages")
         .delete()
-        .eq("user_id", userId);
+        .eq("user_id", userId)
+        .eq("conversation_id", conversationId);
       if (error) console.error("Failed to clear history:", error);
     }
   }, [userId]);
