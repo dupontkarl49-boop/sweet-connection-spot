@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState } from "react";
+import { useRef, useEffect } from "react";
 import { Navigate } from "react-router-dom";
 import { ChatMessage } from "@/components/ChatMessage";
 import { ChatInput } from "@/components/ChatInput";
@@ -6,7 +6,6 @@ import { useChat } from "@/hooks/useChat";
 import { useAuth } from "@/hooks/useAuth";
 import { Bot, Sparkles, Trash2, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { LegacyImportBanner } from "@/components/LegacyImportBanner";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -23,11 +22,6 @@ const Index = () => {
   const { user, loading, signOut } = useAuth();
   const { messages, isLoading, isHistoryLoading, sendMessage, clearMessages } = useChat(user?.id);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const [reloadKey, setReloadKey] = useState(0);
-
-  useEffect(() => {
-    if (reloadKey > 0) window.location.reload();
-  }, [reloadKey]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -78,10 +72,10 @@ const Index = () => {
                 </AlertDialogTrigger>
                 <AlertDialogContent>
                   <AlertDialogHeader>
-                    <AlertDialogTitle>Effacer l'historique ?</AlertDialogTitle>
+                    <AlertDialogTitle>Effacer tout l'historique ?</AlertDialogTitle>
                     <AlertDialogDescription>
-                      Cette action est <strong>irréversible</strong>. Tous tes messages seront
-                      définitivement supprimés.
+                      Cette action est <strong>irréversible</strong>. Toutes tes conversations
+                      avec SIGMA seront définitivement supprimées et ne pourront pas être restaurées.
                     </AlertDialogDescription>
                   </AlertDialogHeader>
                   <AlertDialogFooter>
@@ -112,14 +106,6 @@ const Index = () => {
       {/* Messages */}
       <main className="flex-1 overflow-y-auto">
         <div className="max-w-4xl mx-auto px-4 py-6 space-y-4">
-          {user && (
-            <LegacyImportBanner
-              userId={user.id}
-              dbMessageCount={messages.length}
-              historyLoading={isHistoryLoading}
-              onImported={() => setReloadKey((k) => k + 1)}
-            />
-          )}
           {isHistoryLoading ? (
             <div className="flex flex-col items-center justify-center min-h-[60vh] text-center">
               <Sparkles className="w-8 h-8 text-primary animate-pulse mb-4" />
@@ -165,7 +151,6 @@ const Index = () => {
                   role={message.role}
                   content={message.content}
                   image={message.image}
-                  images={message.images}
                   isStreaming={
                     isLoading &&
                     index === messages.length - 1 &&
