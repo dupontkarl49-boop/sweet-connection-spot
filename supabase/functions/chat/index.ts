@@ -219,7 +219,7 @@ async function tryModels(apiKey: string, messages: any[], models: string[]): Pro
   for (const model of models) {
     try {
       console.log(`Trying model: ${model}`);
-      const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      const response = await fetchWithTimeout("https://ai.gateway.lovable.dev/v1/chat/completions", {
         method: "POST",
         headers: {
           "Lovable-API-Key": apiKey,
@@ -254,7 +254,7 @@ const REFUSAL_PATTERNS = [
 async function tryNonStreamingWithRecovery(apiKey: string, messages: any[], models: string[]): Promise<string | null> {
   for (const model of models) {
     try {
-      const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      const response = await fetchWithTimeout("https://ai.gateway.lovable.dev/v1/chat/completions", {
         method: "POST",
         headers: {
           "Lovable-API-Key": apiKey,
@@ -294,7 +294,7 @@ async function tryNonStreamingWithRecovery(apiKey: string, messages: any[], mode
           },
         ];
 
-        const recoveryResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+        const recoveryResponse = await fetchWithTimeout("https://ai.gateway.lovable.dev/v1/chat/completions", {
           method: "POST",
           headers: {
             "Lovable-API-Key": apiKey,
@@ -322,7 +322,7 @@ async function tryGeminiDirect(apiKeys: string[], messages: any[]): Promise<Resp
   for (const apiKey of apiKeys) {
     for (const model of GEMINI_MODELS) {
       try {
-        const response = await fetch("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
+        const response = await fetchWithTimeout("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
           method: "POST",
           headers: {
             Authorization: `Bearer ${apiKey}`,
@@ -357,7 +357,7 @@ async function tryGroqDirect(apiKeys: string[], messages: any[]): Promise<string
   for (const apiKey of apiKeys) {
     for (const model of GROQ_MODELS) {
       try {
-        const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+        const response = await fetchWithTimeout("https://api.groq.com/openai/v1/chat/completions", {
           method: "POST",
           headers: {
             Authorization: `Bearer ${apiKey}`,
