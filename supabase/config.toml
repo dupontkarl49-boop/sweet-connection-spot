@@ -5,3 +5,6 @@ verify_jwt = false
 
 [functions.clone-site]
 verify_jwt = false
+
+[functions.agent-runner]
+verify_jwt = false
