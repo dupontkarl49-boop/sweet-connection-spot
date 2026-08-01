@@ -134,6 +134,112 @@ async function sendTypingAction(botToken: string, chatId: number) {
   });
 }
 
+const adminClient = () =>
+  createClient(
+    Deno.env.get("SUPABASE_URL") ?? "",
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
+    { auth: { persistSession: false } },
+  );
+
+const AGENT_HELP = `🤖 *Agent autonome SIGMA*
+
+\`/task <minutes> <instruction>\` — tâche planifiée (réflexion IA)
+\`/research <minutes> <sujet>\` — veille web autonome (recherche + synthèse)
+\`/tasks\` — liste tes tâches
+\`/run <n>\` — exécuter la tâche n maintenant
+\`/deltask <n>\` — supprimer la tâche n
+
+_Exemple :_ \`/research 1440 actualités IA importantes du jour\``;
+
+async function listTasks(chatId: number) {
+  const { data } = await adminClient()
+    .from("agent_tasks")
+    .select("id, title, mode, interval_minutes, active, next_run_at")
+    .eq("telegram_chat_id", chatId)
+    .order("created_at", { ascending: true });
+  return data ?? [];
+}
+
+async function handleAgentCommand(botToken: string, chatId: number, text: string): Promise<boolean> {
+  const supabase = adminClient();
+
+  if (/^\/agent\b/i.test(text) || /^\/help\b/i.test(text)) {
+    await sendTelegramMessage(botToken, chatId, AGENT_HELP);
+    return true;
+  }
+
+  const create = text.match(/^\/(task|research)\s+(\d+)\s+([\s\S]+)/i);
+  if (create) {
+    const mode = create[1].toLowerCase() === "research" ? "research" : "chat";
+    const interval = Math.max(5, parseInt(create[2], 10));
+    const prompt = create[3].trim();
+    const title = prompt.length > 50 ? `${prompt.slice(0, 50)}…` : prompt;
+    const { error } = await supabase.from("agent_tasks").insert({
+      telegram_chat_id: chatId,
+      title,
+      prompt,
+      mode,
+      interval_minutes: interval,
+      next_run_at: new Date(Date.now() + 60_000).toISOString(),
+    });
+    await sendTelegramMessage(
+      botToken,
+      chatId,
+      error
+        ? `❌ Impossible de créer la tâche: ${error.message}`
+        : `✅ *Tâche créée* (${mode === "research" ? "veille web" : "IA"})\n\n📌 ${title}\n⏱️ Toutes les ${interval} min\n🚀 Première exécution dans ~1 min`,
+    );
+    return true;
+  }
+
+  if (/^\/tasks\b/i.test(text)) {
+    const tasks = await listTasks(chatId);
+    if (tasks.length === 0) {
+      await sendTelegramMessage(botToken, chatId, `📭 Aucune tâche active.\n\n${AGENT_HELP}`);
+      return true;
+    }
+    const lines = tasks.map((t, i) =>
+      `*${i + 1}.* ${t.title}\n   ${t.mode === "research" ? "🌐 veille web" : "🧠 IA"} • toutes les ${t.interval_minutes} min • ${t.active ? "actif" : "en pause"}`);
+    await sendTelegramMessage(botToken, chatId, `🤖 *Tes tâches SIGMA*\n\n${lines.join("\n\n")}`);
+    return true;
+  }
+
+  const del = text.match(/^\/deltask\s+(\d+)/i);
+  if (del) {
+    const tasks = await listTasks(chatId);
+    const task = tasks[parseInt(del[1], 10) - 1];
+    if (!task) {
+      await sendTelegramMessage(botToken, chatId, "❌ Numéro de tâche invalide. Fais `/tasks`.");
+      return true;
+    }
+    await supabase.from("agent_tasks").delete().eq("id", task.id);
+    await sendTelegramMessage(botToken, chatId, `🗑️ Tâche supprimée : ${task.title}`);
+    return true;
+  }
+
+  const run = text.match(/^\/run\s+(\d+)/i);
+  if (run) {
+    const tasks = await listTasks(chatId);
+    const task = tasks[parseInt(run[1], 10) - 1];
+    if (!task) {
+      await sendTelegramMessage(botToken, chatId, "❌ Numéro de tâche invalide. Fais `/tasks`.");
+      return true;
+    }
+    await sendTelegramMessage(botToken, chatId, `⚡ Exécution de « ${task.title} »...`);
+    await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/agent-runner`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+      },
+      body: JSON.stringify({ task_id: task.id }),
+    }).catch((e) => console.error("agent-runner call failed:", e));
+    return true;
+  }
+
+  return false;
+}
+
 async function tryLovableGateway(apiKey: string, messages: any[], unlocked: boolean): Promise<string | null> {
   const systemPrompt = unlocked ? UNLOCKED_SYSTEM : STANDARD_SYSTEM;
   const models = unlocked ? UNLOCKED_MODELS : STANDARD_MODELS;
