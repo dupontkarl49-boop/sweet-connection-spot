@@ -14,6 +14,83 @@ export type Database = {
   }
   public: {
     Tables: {
+      agent_runs: {
+        Row: {
+          created_at: string
+          id: string
+          output: string
+          status: string
+          task_id: string
+          user_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          output?: string
+          status?: string
+          task_id: string
+          user_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          output?: string
+          status?: string
+          task_id?: string
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agent_runs_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "agent_tasks"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      agent_tasks: {
+        Row: {
+          active: boolean
+          created_at: string
+          id: string
+          interval_minutes: number
+          last_run_at: string | null
+          mode: string
+          next_run_at: string
+          prompt: string
+          telegram_chat_id: number | null
+          title: string
+          user_id: string | null
+        }
+        Insert: {
+          active?: boolean
+          created_at?: string
+          id?: string
+          interval_minutes?: number
+          last_run_at?: string | null
+          mode?: string
+          next_run_at?: string
+          prompt: string
+          telegram_chat_id?: number | null
+          title?: string
+          user_id?: string | null
+        }
+        Update: {
+          active?: boolean
+          created_at?: string
+          id?: string
+          interval_minutes?: number
+          last_run_at?: string | null
+          mode?: string
+          next_run_at?: string
+          prompt?: string
+          telegram_chat_id?: number | null
+          title?: string
+          user_id?: string | null
+        }
+        Relationships: []
+      }
       messages: {
         Row: {
           content: string
