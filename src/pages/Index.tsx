@@ -1,10 +1,10 @@
 import { useRef, useEffect } from "react";
-import { Navigate } from "react-router-dom";
+import { Navigate, Link } from "react-router-dom";
 import { ChatMessage } from "@/components/ChatMessage";
 import { ChatInput } from "@/components/ChatInput";
 import { useChat } from "@/hooks/useChat";
 import { useAuth } from "@/hooks/useAuth";
-import { Bot, Sparkles, Trash2, LogOut } from "lucide-react";
+import { Bot, Sparkles, Trash2, LogOut, Radar } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   AlertDialog,
@@ -58,6 +58,15 @@ const Index = () => {
             </div>
           </div>
           <div className="flex items-center gap-1">
+            <Button
+              variant="ghost"
+              size="sm"
+              asChild
+              className="text-muted-foreground hover:text-foreground"
+              title="Agent autonome"
+            >
+              <Link to="/agent"><Radar className="w-4 h-4" /></Link>
+            </Button>
             {messages.length > 0 && (
               <AlertDialog>
                 <AlertDialogTrigger asChild>
