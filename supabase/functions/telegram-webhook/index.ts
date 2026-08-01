@@ -374,8 +374,13 @@ serve(async (req) => {
 
     if (userText === "/start") {
       await sendTelegramMessage(TELEGRAM_BOT_TOKEN, chatId,
-        "🧠 *Bienvenue sur SIGMA !*\n\nJe suis une IA avancée prête à répondre à toutes tes questions.\n\n💡 *Commandes spéciales :*\n`/clone <url>` — Reproduit fidèlement n'importe quel site web (HTML/CSS/JS)\n\nEnvoie-moi un message pour commencer. ⚡"
+        "🧠 *Bienvenue sur SIGMA !*\n\nJe suis une IA avancée prête à répondre à toutes tes questions.\n\n💡 *Commandes spéciales :*\n`/clone <url>` — Reproduit fidèlement n'importe quel site web\n`/research <minutes> <sujet>` — Veille web autonome\n`/task <minutes> <instruction>` — Tâche planifiée\n`/tasks` — Tes tâches • `/agent` — Aide agent\n\nEnvoie-moi un message pour commencer. ⚡"
       );
+      return new Response("OK", { status: 200 });
+    }
+
+    // Agent autonome (tâches planifiées + veille web)
+    if (await handleAgentCommand(TELEGRAM_BOT_TOKEN, chatId, userText)) {
       return new Response("OK", { status: 200 });
     }
 
