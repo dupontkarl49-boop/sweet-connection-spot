@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { autonomousSearch } from "../_shared/websearch.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -96,6 +97,13 @@ async function runAI(userPrompt: string): Promise<string | null> {
 }
 
 async function webResearch(query: string): Promise<string> {
+  // Recherche autonome multi-moteurs (DuckDuckGo + Bing + Google News + Firecrawl)
+  try {
+    const multi = await autonomousSearch(query, { deep: true });
+    if (multi) return multi;
+  } catch (e) {
+    console.error("autonomousSearch error:", (e as Error).message);
+  }
   const key = Deno.env.get("FIRECRAWL_API_KEY");
   if (!key) return "";
   try {

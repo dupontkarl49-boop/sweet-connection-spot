@@ -484,7 +484,26 @@ serve(async (req) => {
     console.log(`Mode: unlocked=${unlocked}, image=${containsImage}, models=${models.join(",")}`);
 
     const providerMessages = prepareMessagesForProvider(cleanMessages, containsImage);
-    const allMessages = [{ role: "system", content: systemPrompt }, ...providerMessages];
+
+    // Recherche web autonome : /search <requête> ou détection automatique d'un besoin d'info fraîche
+    let searchContext = "";
+    const rawText = String(lastText).trim();
+    const explicitSearch = rawText.match(/^\/search\s+([\s\S]+)/i);
+    const searchQuery = explicitSearch ? explicitSearch[1].trim() : (needsWebSearch(rawText) ? rawText : "");
+    if (searchQuery && !containsImage) {
+      try {
+        searchContext = await autonomousSearch(searchQuery, { deep: Boolean(explicitSearch) });
+      } catch (e) {
+        console.error("autonomousSearch error:", (e as Error).message);
+      }
+    }
+
+    const nowUtc = new Date().toISOString();
+    const systemWithSearch = searchContext
+      ? `${systemPrompt}\n\n--- RECHERCHE WEB TEMPS RÉEL (effectuée automatiquement le ${nowUtc}) ---\nUtilise ces sources pour répondre avec des informations à jour et cite les URL pertinentes. Si elles ne suffisent pas, complète avec tes connaissances.\n${searchContext}`
+      : systemPrompt;
+
+    const allMessages = [{ role: "system", content: systemWithSearch }, ...providerMessages];
 
     // PRIORITY 1: Direct Gemini (free quota, no Lovable credits used)
     const geminiKeys = getValidGeminiKeys();
