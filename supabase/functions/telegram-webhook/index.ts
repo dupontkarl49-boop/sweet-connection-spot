@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { handleMailCommand } from "../_shared/gmail.ts";
 
 const TELEGRAM_API = "https://api.telegram.org/bot";
 
@@ -385,6 +386,13 @@ serve(async (req) => {
     }
 
     // /clone <url> — Holistic Site Cloner
+    // /mail et /sendmail — Gmail connecté
+    const mailReply = await handleMailCommand(userText);
+    if (mailReply) {
+      await sendTelegramMessage(TELEGRAM_BOT_TOKEN, chatId, mailReply);
+      return new Response("OK", { status: 200 });
+    }
+
     const cloneMatch = userText.match(/^\/clone\s+(https?:\/\/\S+)/i);
     if (cloneMatch) {
       const targetUrl = cloneMatch[1];

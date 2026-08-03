@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { autonomousSearch, needsWebSearch } from "../_shared/websearch.ts";
+import { handleMailCommand } from "../_shared/gmail.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -452,6 +453,14 @@ serve(async (req) => {
       ? lastMsg.content.filter((p: any) => p?.type === "text").map((p: any) => p.text).join(" ")
       : (lastMsg?.content ?? "");
     const cloneMatch = String(lastText).trim().match(/^\/clone\s+(https?:\/\/\S+)/i);
+    // /mail et /sendmail — accès Gmail connecté
+    const mailReply = await handleMailCommand(String(lastText));
+    if (mailReply) {
+      return new Response(
+        JSON.stringify({ choices: [{ message: { content: mailReply } }] }),
+        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
     if (cloneMatch) {
       try {
         const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
