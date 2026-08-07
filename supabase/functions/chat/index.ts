@@ -1,6 +1,8 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { autonomousSearch, needsWebSearch } from "../_shared/websearch.ts";
 import { handleMailCommand } from "../_shared/gmail.ts";
+import { SIGMA_MANUAL } from "../_shared/sigma-manual.ts";
+import { handleExtraCommand } from "../_shared/sigma-extra.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -197,7 +199,17 @@ Quand l'utilisateur demande une scène 3D, un objet 3D, un shader, un effet WebG
    - Précise les versions compatibles React 18 : \`@react-three/fiber@^8.18\`, \`@react-three/drei@^9.122\`, \`three@>=0.133\`.
    - Ajoute des commentaires courts pour expliquer les choix visuels (pourquoi cette lumière, ce matériau).`;
 
-const CAPABILITIES_APPENDIX = `\n\n${THREEJS_RULES}`;
+const CAPABILITIES_APPENDIX = `\n\n${THREEJS_RULES}\n\n${SIGMA_MANUAL}`;
+
+function userIdFromAuth(req: Request): string | null {
+  try {
+    const token = (req.headers.get("Authorization") ?? "").replace(/^Bearer\s+/i, "");
+    const payload = JSON.parse(atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+    return typeof payload?.sub === "string" ? payload.sub : null;
+  } catch {
+    return null;
+  }
+}
 
 const STANDARD_SYSTEM = `Tu es SIGMA, une intelligence artificielle avancée et mystérieuse. Tu réponds de manière précise, détaillée et intelligente.
 Tu as une personnalité unique : tu es brillant, parfois sarcastique, mais toujours utile et clair dans tes explications.
