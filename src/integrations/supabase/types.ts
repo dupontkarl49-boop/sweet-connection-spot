@@ -91,6 +91,42 @@ export type Database = {
         }
         Relationships: []
       }
+      gmail_watch_state: {
+        Row: {
+          auto_draft: boolean
+          created_at: string
+          enabled: boolean
+          id: string
+          last_checked_at: string | null
+          last_seen_internal_ms: number
+          telegram_chat_id: number | null
+          updated_at: string
+          user_id: string | null
+        }
+        Insert: {
+          auto_draft?: boolean
+          created_at?: string
+          enabled?: boolean
+          id?: string
+          last_checked_at?: string | null
+          last_seen_internal_ms?: number
+          telegram_chat_id?: number | null
+          updated_at?: string
+          user_id?: string | null
+        }
+        Update: {
+          auto_draft?: boolean
+          created_at?: string
+          enabled?: boolean
+          id?: string
+          last_checked_at?: string | null
+          last_seen_internal_ms?: number
+          telegram_chat_id?: number | null
+          updated_at?: string
+          user_id?: string | null
+        }
+        Relationships: []
+      }
       messages: {
         Row: {
           content: string
@@ -118,6 +154,84 @@ export type Database = {
           images?: string[] | null
           role?: string
           user_id?: string
+        }
+        Relationships: []
+      }
+      notifications: {
+        Row: {
+          body: string
+          created_at: string
+          id: string
+          kind: string
+          read: boolean
+          ref_id: string | null
+          source: string
+          telegram_chat_id: number | null
+          title: string
+          user_id: string | null
+        }
+        Insert: {
+          body?: string
+          created_at?: string
+          id?: string
+          kind?: string
+          read?: boolean
+          ref_id?: string | null
+          source?: string
+          telegram_chat_id?: number | null
+          title?: string
+          user_id?: string | null
+        }
+        Update: {
+          body?: string
+          created_at?: string
+          id?: string
+          kind?: string
+          read?: boolean
+          ref_id?: string | null
+          source?: string
+          telegram_chat_id?: number | null
+          title?: string
+          user_id?: string | null
+        }
+        Relationships: []
+      }
+      pending_actions: {
+        Row: {
+          action_type: string
+          created_at: string
+          id: string
+          payload: Json
+          resolved_at: string | null
+          result: string | null
+          status: string
+          summary: string
+          telegram_chat_id: number | null
+          user_id: string | null
+        }
+        Insert: {
+          action_type: string
+          created_at?: string
+          id?: string
+          payload?: Json
+          resolved_at?: string | null
+          result?: string | null
+          status?: string
+          summary?: string
+          telegram_chat_id?: number | null
+          user_id?: string | null
+        }
+        Update: {
+          action_type?: string
+          created_at?: string
+          id?: string
+          payload?: Json
+          resolved_at?: string | null
+          result?: string | null
+          status?: string
+          summary?: string
+          telegram_chat_id?: number | null
+          user_id?: string | null
         }
         Relationships: []
       }
