@@ -8,3 +8,5 @@ verify_jwt = false
 
 [functions.agent-runner]
 verify_jwt = false
+[functions.gmail-watcher]
+verify_jwt = false
