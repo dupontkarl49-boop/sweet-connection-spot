@@ -93,6 +93,22 @@ export async function handleExtraCommand(text: string, owner: Owner): Promise<st
   const t = (text ?? "").trim();
   const supabase = adminClient();
 
+  // Action sensible : envoi d'email en ton nom → confirmation obligatoire
+  const send = t.match(/^\/sendmail\s+([\s\S]+)/i);
+  if (send) {
+    const parts = send[1].split("|").map((p) => p.trim());
+    if (parts.length < 3 || !parts[0].includes("@")) {
+      return "Format : `/sendmail destinataire@mail.com | Objet | Message`";
+    }
+    const [to, subject, ...rest] = parts;
+    const body = rest.join(" | ");
+    await queueSensitiveAction(owner, "send_mail", { to, subject, body },
+      `Envoyer un email à ${to} — « ${subject} »`);
+    const list = await listPending(owner);
+    const n = list.findIndex((a: any) => a.summary.includes(to) && a.summary.includes(subject)) + 1;
+    return `🔐 **Confirmation requise** (action sensible)\n\n📤 À : ${to}\n📌 Objet : ${subject}\n\n${body.slice(0, 500)}\n\nValide avec \`/confirm ${n || 1}\` ou annule avec \`/cancel ${n || 1}\`.`;
+  }
+
   const watch = t.match(/^\/watchmail(?:\s+(on|off))?\s*$/i);
   if (watch) {
     const enabled = (watch[1] ?? "on").toLowerCase() !== "off";
