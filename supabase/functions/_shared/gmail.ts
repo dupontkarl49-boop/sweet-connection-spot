@@ -80,6 +80,77 @@ export async function sendMail(to: string, subject: string, body: string): Promi
   return `✅ Email envoyé à ${to}.`;
 }
 
+// ============================================================================
+// AJOUTS (surveillance autonome) — n'altèrent aucune fonction existante
+// ============================================================================
+
+export type MailSummary = {
+  id: string;
+  threadId: string;
+  from: string;
+  subject: string;
+  date: string;
+  snippet: string;
+  internalMs: number;
+};
+
+/** Récupère les emails correspondant à une requête, avec métadonnées exploitables. */
+export async function fetchMessages(query = "in:inbox is:unread", max = 10): Promise<MailSummary[]> {
+  const q = new URLSearchParams({ maxResults: String(max) });
+  if (query) q.set("q", query);
+  const res = await gmailFetch(`/users/me/messages?${q.toString()}`);
+  if (!res.ok) throw new Error(`[${res.status}] ${(await res.text()).slice(0, 300)}`);
+  const data = await res.json();
+  const ids: string[] = (data?.messages ?? []).map((m: Record<string, string>) => m.id);
+
+  const details = await Promise.all(ids.map(async (id) => {
+    const r = await gmailFetch(`/users/me/messages/${id}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date`);
+    if (!r.ok) return null;
+    const m = await r.json();
+    return {
+      id: m.id as string,
+      threadId: m.threadId as string,
+      from: header(m, "From"),
+      subject: header(m, "Subject") || "(sans objet)",
+      date: header(m, "Date"),
+      snippet: (m.snippet ?? "") as string,
+      internalMs: Number(m.internalDate ?? 0),
+    } as MailSummary;
+  }));
+
+  return details.filter(Boolean) as MailSummary[];
+}
+
+function encodeRawReply(to: string, subject: string, body: string, inReplyTo?: string): string {
+  const lines = [
+    `To: ${to}`,
+    `Subject: =?UTF-8?B?${btoa(unescape(encodeURIComponent(subject)))}?=`,
+    'Content-Type: text/plain; charset="UTF-8"',
+    "MIME-Version: 1.0",
+  ];
+  if (inReplyTo) {
+    lines.push(`In-Reply-To: ${inReplyTo}`, `References: ${inReplyTo}`);
+  }
+  lines.push("", body);
+  const bytes = new TextEncoder().encode(lines.join("\r\n"));
+  let bin = "";
+  bytes.forEach((b) => { bin += String.fromCharCode(b); });
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+/** Crée un brouillon de réponse (aucun envoi — action non sensible). */
+export async function createDraft(to: string, subject: string, body: string, threadId?: string): Promise<string> {
+  const message: Record<string, unknown> = { raw: encodeRawReply(to, subject, body) };
+  if (threadId) message.threadId = threadId;
+  const res = await gmailFetch("/users/me/drafts", {
+    method: "POST",
+    body: JSON.stringify({ message }),
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`[${res.status}] ${text.slice(0, 300)}`);
+  return JSON.parse(text)?.id ?? "draft";
+}
+
 /**
  * Traite les commandes Gmail :
  *   /mail            → 5 derniers emails
