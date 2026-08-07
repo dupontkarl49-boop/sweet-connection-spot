@@ -4,7 +4,7 @@ import { ChatMessage } from "@/components/ChatMessage";
 import { ChatInput } from "@/components/ChatInput";
 import { useChat } from "@/hooks/useChat";
 import { useAuth } from "@/hooks/useAuth";
-import { Bot, Sparkles, Trash2, LogOut, Radar } from "lucide-react";
+import { Bot, Sparkles, Trash2, LogOut, Radar, Bell } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   AlertDialog,
@@ -66,6 +66,15 @@ const Index = () => {
               title="Agent autonome"
             >
               <Link to="/agent"><Radar className="w-4 h-4" /></Link>
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              asChild
+              className="text-muted-foreground hover:text-foreground"
+              title="Notifications & surveillance Gmail"
+            >
+              <Link to="/notifications"><Bell className="w-4 h-4" /></Link>
             </Button>
             {messages.length > 0 && (
               <AlertDialog>
