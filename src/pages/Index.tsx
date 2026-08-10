@@ -177,6 +177,18 @@ const Index = () => {
                   }
                 />
               ))}
+              {isLoading && messages[messages.length - 1]?.role === "user" && (
+                <div className="flex items-center gap-3 p-4 rounded-xl bg-card border border-border mr-8">
+                  <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-primary/20 to-accent/20 border border-primary/30 flex items-center justify-center">
+                    <Bot className="w-5 h-5 text-primary" />
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span className="w-2 h-2 rounded-full bg-primary animate-bounce [animation-delay:-0.3s]" />
+                    <span className="w-2 h-2 rounded-full bg-primary animate-bounce [animation-delay:-0.15s]" />
+                    <span className="w-2 h-2 rounded-full bg-primary animate-bounce" />
+                  </div>
+                </div>
+              )}
               <div ref={messagesEndRef} />
             </>
           )}
