@@ -57,13 +57,14 @@ export function useChat(userId: string | undefined) {
       .from("messages")
       .select("role, content, image, images")
       .eq("user_id", userId)
-      .order("created_at", { ascending: true })
+      .order("created_at", { ascending: false })
+      .limit(500)
       .then(async ({ data, error }) => {
         if (cancelled) return;
         if (error) {
           console.error("Failed to load history:", error);
         } else if (data) {
-          const cloudMessages = data.map((m) => ({
+          const cloudMessages = [...data].reverse().map((m) => ({
             role: m.role as "user" | "assistant",
             content: m.content,
             image: m.image ?? undefined,
@@ -145,7 +146,9 @@ export function useChat(userId: string | undefined) {
 
     try {
       // Build messages for API - convert to multimodal format if images present
-      const apiMessages = [...messages, userMessage].map((msg) => {
+      // On n'envoie que la fenêtre de contexte récente (le serveur en garde 24) :
+      // évite d'uploader des centaines de messages à chaque requête.
+      const apiMessages = [...messages, userMessage].slice(-24).map((msg) => {
         const imgs = msg.images && msg.images.length > 0 ? msg.images : msg.image ? [msg.image] : [];
         if (imgs.length > 0) {
           return {
