@@ -131,17 +131,15 @@ export function useChat(userId: string | undefined) {
 
     let assistantContent = "";
 
+    // On accumule la réponse en mémoire et on l'affiche en UN SEUL BLOC à la fin
+    // (le streaming réseau reste actif côté serveur pour garder la vitesse).
     const updateAssistant = (chunk: string) => {
       assistantContent += chunk;
-      setMessages((prev) => {
-        const last = prev[prev.length - 1];
-        if (last?.role === "assistant") {
-          return prev.map((m, i) =>
-            i === prev.length - 1 ? { ...m, content: assistantContent } : m
-          );
-        }
-        return [...prev, { role: "assistant", content: assistantContent }];
-      });
+    };
+
+    const commitAssistant = () => {
+      if (!assistantContent) return;
+      setMessages((prev) => [...prev, { role: "assistant", content: assistantContent }]);
     };
 
     try {
@@ -251,6 +249,7 @@ export function useChat(userId: string | undefined) {
       });
     } finally {
       setIsLoading(false);
+      commitAssistant();
       if (assistantContent) {
         persistMessage({ role: "assistant", content: assistantContent });
       }
