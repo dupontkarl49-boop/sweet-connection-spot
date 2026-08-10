@@ -390,7 +390,7 @@ async function tryGeminiDirect(apiKeys: string[], messages: any[]): Promise<Resp
             Authorization: `Bearer ${apiKey}`,
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({ model, messages }),
+          body: JSON.stringify({ model, messages, stream: true }),
         });
 
         if (!response.ok) {
@@ -399,14 +399,13 @@ async function tryGeminiDirect(apiKeys: string[], messages: any[]): Promise<Resp
           continue;
         }
 
-        console.log(`Gemini direct OK with ${model}`);
-        const data = await response.json();
-        const content = data?.choices?.[0]?.message?.content;
-        if (typeof content !== "string" || !content.trim()) continue;
-        return new Response(
-          JSON.stringify({ choices: [{ message: { content } }] }),
-          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
+        if (!response.body) continue;
+        console.log(`Gemini direct streaming OK with ${model}`);
+        // Streaming : l'utilisateur voit la réponse arriver immédiatement (aucune capacité perdue)
+        return new Response(response.body, {
+          status: 200,
+          headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
+        });
       } catch (err) {
         console.error(`Gemini ${model} error:`, err);
       }
