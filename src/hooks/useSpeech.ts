@@ -18,6 +18,23 @@ function pickFrenchVoice(): SpeechSynthesisVoice | null {
   );
 }
 
+/** Découpe le texte en morceaux courts (certains navigateurs coupent au-delà de ~200 caractères). */
+function chunkText(text: string): string[] {
+  const parts = text.replace(/\s+/g, " ").trim().match(/[^.!?…\n]+[.!?…]*/g) ?? [text];
+  const chunks: string[] = [];
+  let current = "";
+  for (const part of parts) {
+    if ((current + part).length > 180) {
+      if (current) chunks.push(current.trim());
+      current = part;
+    } else {
+      current += part;
+    }
+  }
+  if (current.trim()) chunks.push(current.trim());
+  return chunks;
+}
+
 /** Lecture vocale (français) d'un texte, via la Web Speech API du navigateur. */
 export function useSpeech(id: string) {
   const [speakingId, setSpeakingId] = useState<string | null>(currentId);
@@ -41,35 +58,38 @@ export function useSpeech(id: string) {
   const speak = useCallback(
     (text: string) => {
       if (!supported || !text.trim()) return;
-      window.speechSynthesis.cancel();
+      const synth = window.speechSynthesis;
+      synth.cancel();
+      // Certains navigateurs (mobile) restent en pause après un cancel().
+      synth.resume();
 
-      const start = () => {
-        const utterance = new SpeechSynthesisUtterance(text);
+      const voice = pickFrenchVoice();
+      const chunks = chunkText(text);
+      setCurrent(id);
+
+      chunks.forEach((chunk, index) => {
+        const utterance = new SpeechSynthesisUtterance(chunk);
         utterance.lang = "fr-FR";
-        const voice = pickFrenchVoice();
         if (voice) utterance.voice = voice;
         utterance.rate = 1;
         utterance.pitch = 1;
-        utterance.onend = () => setCurrent(null);
+        if (index === chunks.length - 1) {
+          utterance.onend = () => setCurrent(null);
+        }
         utterance.onerror = () => setCurrent(null);
         utteranceRef.current = utterance;
-        setCurrent(id);
-        window.speechSynthesis.speak(utterance);
-      };
+        synth.speak(utterance);
+      });
 
-      // Les voix peuvent être chargées de façon asynchrone.
-      if (!window.speechSynthesis.getVoices().length) {
-        const handler = () => {
-          window.speechSynthesis.onvoiceschanged = null;
-          start();
-        };
-        window.speechSynthesis.onvoiceschanged = handler;
-        setTimeout(() => {
-          if (window.speechSynthesis.onvoiceschanged === handler) handler();
-        }, 300);
-      } else {
-        start();
-      }
+      // Workaround Chrome : la synthèse s'interrompt après ~15 s.
+      const keepAlive = window.setInterval(() => {
+        if (!synth.speaking) {
+          window.clearInterval(keepAlive);
+          return;
+        }
+        synth.pause();
+        synth.resume();
+      }, 10000);
     },
     [id, supported]
   );
