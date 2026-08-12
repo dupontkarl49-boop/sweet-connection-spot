@@ -33,7 +33,7 @@ const Index = () => {
     const el = scrollRef.current;
     if (!el) return;
     const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
-    setShowScrollDown(distance > 200);
+    setShowScrollDown(distance > 120);
   }, []);
 
   const scrollToBottom = useCallback(() => {
@@ -53,7 +53,7 @@ const Index = () => {
   }
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
+    <div className="h-[100dvh] min-h-screen bg-background flex flex-col overflow-hidden">
       {/* Header */}
       <header className="border-b border-border bg-card/50 backdrop-blur-xl sticky top-0 z-10">
         <div className="max-w-4xl mx-auto px-4 py-4 flex items-center justify-between">
@@ -135,7 +135,7 @@ const Index = () => {
       </header>
 
       {/* Messages */}
-      <main ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto relative">
+      <main ref={scrollRef} onScroll={handleScroll} className="flex-1 min-h-0 overflow-y-auto relative">
         <div className="max-w-4xl mx-auto px-4 py-6 space-y-4">
           {isHistoryLoading ? (
             <div className="flex flex-col items-center justify-center min-h-[60vh] text-center">
