@@ -1,5 +1,7 @@
 import { cn } from "@/lib/utils";
-import { Bot, User } from "lucide-react";
+import { Bot, User, Volume2, Square } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { useSpeech } from "@/hooks/useSpeech";
 
 interface ChatMessageProps {
   role: "user" | "assistant";
@@ -7,11 +9,13 @@ interface ChatMessageProps {
   image?: string;
   images?: string[];
   isStreaming?: boolean;
+  messageId?: string;
 }
 
-export function ChatMessage({ role, content, image, images, isStreaming }: ChatMessageProps) {
+export function ChatMessage({ role, content, image, images, isStreaming, messageId }: ChatMessageProps) {
   const isUser = role === "user";
   const allImages = images && images.length > 0 ? images : image ? [image] : [];
+  const { supported, isSpeaking, speak, stop } = useSpeech(messageId ?? content.slice(0, 32));
 
   return (
     <div
@@ -37,9 +41,26 @@ export function ChatMessage({ role, content, image, images, isStreaming }: ChatM
         )}
       </div>
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium mb-1 text-muted-foreground">
-          {isUser ? "Toi" : "SIGMA"}
-        </p>
+        <div className="flex items-center justify-between gap-2 mb-1">
+          <p className="text-sm font-medium text-muted-foreground">
+            {isUser ? "Toi" : "SIGMA"}
+          </p>
+          {!isUser && supported && !isStreaming && content.trim() && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2 text-muted-foreground hover:text-primary"
+              title={isSpeaking ? "Arrêter la lecture" : "Écouter la réponse"}
+              onClick={() => (isSpeaking ? stop() : speak(content))}
+            >
+              {isSpeaking ? (
+                <Square className="w-3.5 h-3.5" />
+              ) : (
+                <Volume2 className="w-4 h-4" />
+              )}
+            </Button>
+          )}
+        </div>
         {allImages.length > 0 && (
           <div className="flex flex-wrap gap-2 mb-2">
             {allImages.map((img, index) => (

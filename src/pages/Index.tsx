@@ -1,10 +1,10 @@
-import { useRef, useEffect } from "react";
+import { useRef, useEffect, useState, useCallback } from "react";
 import { Navigate, Link } from "react-router-dom";
 import { ChatMessage } from "@/components/ChatMessage";
 import { ChatInput } from "@/components/ChatInput";
 import { useChat } from "@/hooks/useChat";
 import { useAuth } from "@/hooks/useAuth";
-import { Bot, Sparkles, Trash2, LogOut, Radar, Bell } from "lucide-react";
+import { Bot, Sparkles, Trash2, LogOut, Radar, Bell, ArrowDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   AlertDialog,
@@ -22,10 +22,23 @@ const Index = () => {
   const { user, loading, signOut } = useAuth();
   const { messages, isLoading, isHistoryLoading, sendMessage, clearMessages } = useChat(user?.id);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLElement>(null);
+  const [showScrollDown, setShowScrollDown] = useState(false);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  const handleScroll = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+    setShowScrollDown(distance > 200);
+  }, []);
+
+  const scrollToBottom = useCallback(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, []);
 
   if (loading) {
     return (
@@ -122,7 +135,7 @@ const Index = () => {
       </header>
 
       {/* Messages */}
-      <main className="flex-1 overflow-y-auto">
+      <main ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto relative">
         <div className="max-w-4xl mx-auto px-4 py-6 space-y-4">
           {isHistoryLoading ? (
             <div className="flex flex-col items-center justify-center min-h-[60vh] text-center">
@@ -166,6 +179,7 @@ const Index = () => {
               {messages.map((message, index) => (
                 <ChatMessage
                   key={index}
+                  messageId={`msg-${index}`}
                   role={message.role}
                   content={message.content}
                   image={message.image}
@@ -196,7 +210,17 @@ const Index = () => {
       </main>
 
       {/* Input */}
-      <footer className="border-t border-border bg-background/80 backdrop-blur-xl sticky bottom-0">
+      <footer className="relative border-t border-border bg-background/80 backdrop-blur-xl sticky bottom-0">
+        {showScrollDown && messages.length > 0 && (
+          <Button
+            size="icon"
+            onClick={scrollToBottom}
+            title="Aller au dernier message"
+            className="absolute right-4 -top-14 rounded-full shadow-lg shadow-primary/25 z-20"
+          >
+            <ArrowDown className="w-5 h-5" />
+          </Button>
+        )}
         <div className="max-w-4xl mx-auto px-4 py-4">
           <ChatInput onSend={sendMessage} isLoading={isLoading} />
         </div>
