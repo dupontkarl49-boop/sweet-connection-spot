@@ -210,7 +210,7 @@ const Index = () => {
       </main>
 
       {/* Input */}
-      <footer className="border-t border-border bg-background/80 backdrop-blur-xl sticky bottom-0">
+      <footer className="relative border-t border-border bg-background/80 backdrop-blur-xl sticky bottom-0">
         {showScrollDown && messages.length > 0 && (
           <Button
             size="icon"
